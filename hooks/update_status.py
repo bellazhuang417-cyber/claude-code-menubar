@@ -33,9 +33,12 @@ def read_payload():
         return {}
 
 
-def first_user_text(transcript_path: str) -> str:
+def latest_user_text(transcript_path: str) -> str:
+    """Return the most recent meaningful user message from the transcript.
+    Falls back to earlier messages if the last one is a tag / file ref / skill opener."""
     if not transcript_path or not os.path.exists(transcript_path):
         return ""
+    candidates = []
     try:
         with open(transcript_path, "r", encoding="utf-8") as f:
             for line in f:
@@ -60,19 +63,17 @@ def first_user_text(transcript_path: str) -> str:
                 text = text.strip()
                 if not text:
                     continue
-                # Skip tags / commands / tool-call brackets / file refs
                 if text.startswith(("<", "/", "[", "@")):
                     continue
-                # Skip skill / system injected openers
                 lowered = text.lower()
                 if lowered.startswith(("base directory for", "caveat:", "system:")):
                     continue
                 if len(text) < 3:
                     continue
-                return text
+                candidates.append(text)
     except OSError:
         return ""
-    return ""
+    return candidates[-1] if candidates else ""
 
 
 def truncate(s: str, n: int = LABEL_MAX) -> str:
@@ -127,8 +128,9 @@ def main():
         sessions = data.setdefault("sessions", {})
         entry = sessions.get(session_id, {})
 
-        # Derive label (only need to compute once per session, keep if already set)
-        label = entry.get("label") or truncate(first_user_text(transcript_path)) or project
+        # Always re-derive label from the latest user message so long sessions
+        # reflect the current topic, not the opener.
+        label = truncate(latest_user_text(transcript_path)) or entry.get("label") or project
 
         sessions[session_id] = {
             "state": state,
