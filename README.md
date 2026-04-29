@@ -1,6 +1,6 @@
 # Claude Code Menubar
 
-在 macOS 菜单栏显示 Claude Code 当前状态，让你不盯屏幕也能知道 Claude 什么时候在等你、什么时候跑完了。
+在 macOS 菜单栏显示 Claude Code 当前状态，让你不盯屏幕也能知道 Claude 什么时候在等你、什么时候跑完了。**支持多会话**：同时开多个 Claude 窗口时，菜单栏下拉会列出每个会话各自的进度，一眼看出"是哪个在等你"。
 
 ## 状态图标
 
@@ -12,6 +12,25 @@
 | 完成 | 🎉 | 刚回答完，30 秒后回到 💤 |
 
 全程无声，不打扰。
+
+## 多会话视图
+
+菜单栏图标永远显示**优先级最高**的状态（pending > running > done > idle）。点开下拉能看到每个活跃会话：
+
+```
+👀 ↔ 🙈                          ← 有 1 个会话在等你，图标闪
+─────────────────────────────────
+Claude Code · 3 个会话
+─────────────────────────────────
+👀  帮我加一个菜单栏通知…
+— 等你确认 · AI cowork space · 刚刚
+🤖  Content Health Check V7 迭代…
+— 干活中 · AI cowork space · 12 秒前
+🎉  提取飞书文档数据…
+— 完成了 · play-product-schema · 2 分钟前
+```
+
+会话标题取自你在该 session 里发的**第一句话**的前 40 字。超过 30 分钟没活动的会话会自动从列表里隐藏。
 
 ## 安装
 
@@ -38,15 +57,16 @@ cd claude-code-menubar
 ## 工作原理
 
 ```
-Claude Code 事件
-    ↓ (Notification / Stop / PreToolUse hook)
-~/.claude-menubar/write_status.sh
-    ↓ 写入 JSON
-~/.claude-menubar/status.json
+Claude Code 事件（带 session_id + transcript_path）
+    ↓ (Notification / Stop / PreToolUse hook, JSON via stdin)
+~/.claude-menubar/update_status.py
+    ↓ 读 transcript 抽首条用户消息当 label
+    ↓ 按 session_id 聚合写入（文件锁防并发）
+~/.claude-menubar/status.json  { sessions: { id1: {...}, id2: {...} } }
     ↑ 每秒读
 SwiftBar 插件 (claude.1s.py)
     ↓
-菜单栏图标
+菜单栏图标 + 下拉会话列表
 ```
 
 - `Notification` hook → `pending`（Claude 需要权限时触发）

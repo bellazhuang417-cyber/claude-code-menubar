@@ -56,23 +56,45 @@ SwiftBar 插件 (claude.1s.py)
 macOS 菜单栏图标
 ```
 
-### 4.3 状态文件格式
+### 4.3 状态文件格式（v2，按 session 聚合）
 
 `~/.claude-menubar/status.json`
 
 ```json
 {
-  "state": "pending",
-  "project": "AI cowork space",
-  "updated_at": 1745840000,
-  "message": "需要确认权限"
+  "sessions": {
+    "6867152e-9055-46e6-838f-33968015e76c": {
+      "state": "pending",
+      "project": "AI cowork space",
+      "label": "帮我加一个菜单栏通知…",
+      "updated_at": 1745840000,
+      "transcript_path": "/Users/bella/.claude/projects/.../xxx.jsonl"
+    },
+    "89a51fec-a77f-414a-9746-b54db179cb3b": {
+      "state": "running",
+      "project": "play-product-schema",
+      "label": "Content Health Check V7 迭代…",
+      "updated_at": 1745840010,
+      "transcript_path": "..."
+    }
+  }
 }
 ```
 
-- `state`: `idle` | `running` | `pending` | `done`
-- `project`: 触发事件时的工作目录名（用于菜单栏点击展开显示）
-- `updated_at`: Unix 时间戳，用于 `done` 状态自动过期
-- `message`: 给菜单栏下拉菜单展示的文字
+- `sessions`: 按 Claude Code 的 `session_id` 聚合，同一会话重复触发 hook 会 upsert 同一条
+- `label`: 从 `transcript_path` JSONL 中抽取首条**用户文本消息**的前 40 字（跳过 `@文件引用`、`<tag>`、skill 注入的 "Base directory for..." 等系统消息）
+- 过期策略：单个 session 超过 `SESSION_LIST_TTL=30min` 未更新，插件渲染时隐藏；超过 1 小时则从文件中物理删除
+- 并发写保护：`update_status.py` 用 `fcntl.LOCK_EX` 文件锁，避免多 session 同时触发 hook 时互相覆盖
+
+### 4.4 菜单栏交互（v2）
+
+- **顶部图标**：展示全局优先级最高的 state（pending > running > done > idle），1s 闪烁
+- **下拉面板**：
+  - 标题行：`Claude Code · N 个会话`
+  - 每个 session 两行：状态 emoji + label / 状态中文 + 项目名 + 相对时间
+  - `Clear all` 菜单项：清空所有 session
+  - `Open status file`：打开状态 JSON 调试
+  - `Refresh now`：手动刷新
 
 ### 4.4 菜单栏交互
 

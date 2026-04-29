@@ -36,9 +36,11 @@ fi
 # ---------- 2. 复制 hooks 脚本 ----------
 say "安装 hook 脚本到 $HOOK_DIR"
 mkdir -p "$HOOK_DIR"
-cp "$REPO_DIR/hooks/write_status.sh" "$HOOK_DIR/write_status.sh"
+cp "$REPO_DIR/hooks/update_status.py" "$HOOK_DIR/update_status.py"
 cp "$REPO_DIR/hooks/clear.sh" "$HOOK_DIR/clear.sh"
-chmod +x "$HOOK_DIR/write_status.sh" "$HOOK_DIR/clear.sh"
+chmod +x "$HOOK_DIR/update_status.py" "$HOOK_DIR/clear.sh"
+# Remove legacy v1 script if present
+rm -f "$HOOK_DIR/write_status.sh"
 ok "hook 脚本就位"
 
 # ---------- 3. 初始化状态文件 ----------
@@ -70,7 +72,7 @@ fi
 python3 - "$SETTINGS" "$HOOK_DIR" <<'PYEOF'
 import json, sys, os, shutil, time
 settings_path, hook_dir = sys.argv[1], sys.argv[2]
-write_status = os.path.join(hook_dir, "write_status.sh")
+update_cmd = os.path.join(hook_dir, "update_status.py")
 
 with open(settings_path, "r", encoding="utf-8") as f:
     try:
@@ -82,9 +84,18 @@ shutil.copy(settings_path, settings_path + f".bak.{int(time.time())}")
 
 hooks = data.setdefault("hooks", {})
 
+# Drop any legacy entries that pointed to v1 write_status.sh
+for event in list(hooks.keys()):
+    hooks[event] = [
+        e for e in hooks[event]
+        if not any("write_status.sh" in h.get("command", "") for h in e.get("hooks", []))
+    ]
+    if not hooks[event]:
+        del hooks[event]
+
 def ensure_hook(event: str, state: str):
     entries = hooks.setdefault(event, [])
-    marker = f"write_status.sh {state}"
+    marker = f"update_status.py {state}"
     for entry in entries:
         for h in entry.get("hooks", []):
             if marker in h.get("command", ""):
@@ -92,7 +103,7 @@ def ensure_hook(event: str, state: str):
     entries.append({
         "hooks": [{
             "type": "command",
-            "command": f'{write_status} {state}'
+            "command": f'{update_cmd} {state}'
         }]
     })
 

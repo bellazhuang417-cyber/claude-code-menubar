@@ -27,7 +27,7 @@ shutil.copy(p, p + f".bak.{int(time.time())}")
 hooks = data.get("hooks", {})
 for ev in list(hooks.keys()):
     hooks[ev] = [e for e in hooks[ev]
-                 if not any("write_status.sh" in h.get("command","") for h in e.get("hooks", []))]
+                 if not any(("write_status.sh" in h.get("command","")) or ("update_status.py" in h.get("command","")) for h in e.get("hooks", []))]
     if not hooks[ev]:
         del hooks[ev]
 if not hooks:
