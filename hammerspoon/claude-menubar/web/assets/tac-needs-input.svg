@@ -1,0 +1,154 @@
+<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="512" height="563">
+  
+  <defs>
+    
+    <radialGradient id="g-helmet" cx="50%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#ffffff"></stop>
+      <stop offset="55%" stop-color="#f5efe2"></stop>
+      <stop offset="100%" stop-color="#d9cfb9"></stop>
+    </radialGradient>
+    <radialGradient id="g-visor" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#3a3f48"></stop>
+      <stop offset="60%" stop-color="#1a1c20"></stop>
+      <stop offset="100%" stop-color="#0a0c0f"></stop>
+    </radialGradient>
+    <radialGradient id="g-cheek" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffd0a8" stop-opacity="0.9"></stop>
+      <stop offset="100%" stop-color="#ffd0a8" stop-opacity="0"></stop>
+    </radialGradient>
+    <linearGradient id="g-body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fefcf6"></stop>
+      <stop offset="100%" stop-color="#e7dcc4"></stop>
+    </linearGradient>
+
+    
+    <symbol id="eye-working" viewBox="-10 -10 20 20" overflow="visible">
+      <ellipse cx="0" cy="0" rx="5.5" ry="4.5" fill="#f5a524"></ellipse>
+      <rect x="-5.5" y="-1" width="11" height="2" fill="#1a1208" opacity="0.6" rx="1"></rect>
+      <circle cx="-1.6" cy="-1.6" r="1" fill="#fff" opacity="0.9"></circle>
+    </symbol>
+    <symbol id="eye-input" viewBox="-10 -10 20 20" overflow="visible">
+      <circle cx="0" cy="0" r="5.2" fill="#e84c88"></circle>
+      <circle cx="0" cy="0" r="2.4" fill="#1a0810"></circle>
+      <circle cx="-1.5" cy="-1.5" r="1.2" fill="#fff" opacity="0.95"></circle>
+    </symbol>
+    <symbol id="eye-done" viewBox="-10 -10 20 20" overflow="visible">
+      <path d="M-5 0.5 Q0 -4.5 5 0.5" stroke="#4ade80" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+    </symbol>
+    <symbol id="eye-idle" viewBox="-10 -10 20 20" overflow="visible">
+      <circle cx="0" cy="0" r="4.2" fill="#f5a524"></circle>
+      <circle cx="0" cy="0" r="1.8" fill="#1a1208"></circle>
+      <circle cx="-1.3" cy="-1.4" r="1.1" fill="#fff" opacity="0.95"></circle>
+    </symbol>
+
+    
+    <symbol id="tac" viewBox="0 0 200 220">
+      
+      <g class="tail tail-sway">
+        <animateTransform attributeName="transform" type="rotate" values="-7 62 36; 7 62 36; -7 62 36" dur="1.4s" repeatCount="indefinite" additive="sum"/>
+        <path d="M62 36&#xA;                 C 38 24, 18 42, 26 64&#xA;                 C 32 78, 50 78, 56 70" stroke="#e8e6df" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M62 36&#xA;                 C 38 24, 18 42, 26 64&#xA;                 C 32 78, 50 78, 56 70" stroke="rgba(0,0,0,0.10)" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="0 14 4 200"></path>
+        
+        <circle cx="62" cy="36" r="5.5" fill="#fff" stroke="#d9cfb9" stroke-width="1"></circle>
+        <circle cx="62" cy="36" r="2.6" fill="#f5a524" class="antenna-blink"></circle>
+      </g>
+
+      
+      <g class="body">
+        <path d="M44 200&#xA;                 L44 174&#xA;                 Q44 154 64 152&#xA;                 L136 152&#xA;                 Q156 154 156 174&#xA;                 L156 200 Z" fill="url(#g-body)" stroke="#cfc4ad" stroke-width="1.2"></path>
+        
+        <path d="M62 162 Q100 152 138 162" stroke="#cfc4ad" stroke-width="1.2" fill="none"></path>
+        
+        <rect x="86" y="166" width="28" height="14" rx="3" fill="#0e0f12" opacity="0.7"></rect>
+        <circle cx="94" cy="173" r="1.8" fill="#4ade80"></circle>
+        <circle cx="100" cy="173" r="1.8" fill="#f5a524"></circle>
+        <circle cx="106" cy="173" r="1.8" fill="#e84c88" opacity="0.8"></circle>
+      </g>
+
+      
+      <g class="head-group float">
+        
+        <g class="ears">
+          
+          <path d="M52 64&#xA;                   L48 28&#xA;                   L82 56 Z" fill="url(#g-helmet)" stroke="#bdb19a" stroke-width="1.3" stroke-linejoin="round"></path>
+          <path d="M58 56 L55 36 L72 52" fill="#f8b27a" opacity="0.85"></path>
+          
+          <path d="M148 64&#xA;                   L152 28&#xA;                   L118 56 Z" fill="url(#g-helmet)" stroke="#bdb19a" stroke-width="1.3" stroke-linejoin="round"></path>
+          <path d="M142 56 L145 36 L128 52" fill="#f8b27a" opacity="0.85"></path>
+        </g>
+
+        
+        <ellipse cx="100" cy="98" rx="58" ry="56" fill="url(#g-helmet)" stroke="#bdb19a" stroke-width="1.5"></ellipse>
+
+        
+        <ellipse cx="78" cy="64" rx="22" ry="9" fill="#ffffff" opacity="0.6"></ellipse>
+
+        
+        <path d="M52 110 Q62 124 78 124" stroke="#cfc4ad" stroke-width="1.4" fill="none" stroke-linecap="round"></path>
+        <path d="M148 110 Q138 124 122 124" stroke="#cfc4ad" stroke-width="1.4" fill="none" stroke-linecap="round"></path>
+
+        
+        <path d="M52 92&#xA;                 Q52 72 76 70&#xA;                 L124 70&#xA;                 Q148 72 148 92&#xA;                 L148 122&#xA;                 Q148 138 124 140&#xA;                 L76 140&#xA;                 Q52 138 52 122 Z" fill="url(#g-visor)" stroke="#0a0c0f" stroke-width="1.2"></path>
+
+        
+        <path d="M60 84&#xA;                 Q70 76 96 78&#xA;                 L100 84&#xA;                 Q82 84 68 92 Z" fill="#ffffff" opacity="0.14"></path>
+
+        
+        <ellipse cx="70" cy="124" rx="10" ry="6" fill="url(#g-cheek)" opacity="0.65"></ellipse>
+        <ellipse cx="130" cy="124" rx="10" ry="6" fill="url(#g-cheek)" opacity="0.65"></ellipse>
+
+        
+        <g class="eyes">
+          <use href="#eye-idle" x="75" y="98" width="20" height="20" class="blink"></use>
+          <use href="#eye-idle" x="105" y="98" width="20" height="20" class="blink"></use>
+        </g>
+
+        
+        <g class="whiskers" fill="#ffffff" opacity="0.4">
+          <circle cx="62" cy="104" r="1.1"></circle>
+          <circle cx="59" cy="110" r="1.1"></circle>
+          <circle cx="62" cy="116" r="1.1"></circle>
+          <circle cx="138" cy="104" r="1.1"></circle>
+          <circle cx="141" cy="110" r="1.1"></circle>
+          <circle cx="138" cy="116" r="1.1"></circle>
+        </g>
+
+        
+        <path d="M95 128 L105 128 L100 133 Z" fill="#f5a524" opacity="0.95"></path>
+        
+        <path d="M93 137 Q100 142 107 137" stroke="#f5a524" stroke-width="1.4" fill="none" stroke-linecap="round" opacity="0.7"></path>
+      </g>
+    </symbol>
+
+    
+    <symbol id="tac-working" viewBox="0 0 200 220">
+      <use href="#tac"></use>
+      <g>
+        <rect x="58" y="95" width="84" height="40" fill="url(#g-visor)" rx="18" opacity="0"></rect>
+      </g>
+    </symbol>
+  </defs>
+
+  
+  <use href="#tac"></use>
+  
+    <ellipse cx="85" cy="108" rx="7" ry="6" fill="#1a1c20"></ellipse>
+    <ellipse cx="115" cy="108" rx="7" ry="6" fill="#1a1c20"></ellipse>
+            <use href="#eye-input" x="75" y="98" width="20" height="20">
+        <animate attributeName="opacity"
+          values="1; 1; 0; 1; 1"
+          keyTimes="0; 0.45; 0.5; 0.55; 1"
+          dur="2.2s" repeatCount="indefinite"/>
+      </use>
+      <use href="#eye-input" x="105" y="98" width="20" height="20">
+        <animate attributeName="opacity"
+          values="1; 1; 0; 1; 1"
+          keyTimes="0; 0.45; 0.5; 0.55; 1"
+          dur="2.2s" repeatCount="indefinite"/>
+      </use>
+  <g transform="translate(150, 50)">
+        <circle r="13" fill="#fff"></circle>
+        <text x="0" y="5" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="17" font-weight="700" fill="#e84c88">?</text>
+      </g>
+</svg>

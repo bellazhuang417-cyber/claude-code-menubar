@@ -1,0 +1,487 @@
+/* ============================================================
+   Claude Code Menubar — v0.2 WebView styles
+   Ported from design handoff session-notifications/styles.css.
+   Removed: stage, bg-terminal, macOS menubar, dd-tabs, avatars,
+   toast, reply panel. Kept: dropdown shell, session row, expanded
+   detail (log + permission card + working/done panels), footer.
+   Font stack adds "PingFang SC" so Chinese labels don't fall back
+   to Times (R5).
+   ============================================================ */
+
+:root {
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, "PingFang SC", monospace;
+  --sans: -apple-system, system-ui, "PingFang SC", "Helvetica Neue", sans-serif;
+
+  --bg-pane:   #0e0f12;
+  --bg-pane-2: #14161a;
+  --bg-pane-3: #1a1d22;
+  --line:    rgba(255,255,255,0.06);
+  --line-2:  rgba(255,255,255,0.10);
+
+  --fg:      #e8e6df;
+  --fg-soft: #a8a59c;
+  --fg-mute: #5c5b56;
+  --fg-dim:  #3a3935;
+
+  --st-work:  #f5a524;
+  --st-input: #e84c88;
+  --st-done:  #4ade80;
+
+  --st-input-glow: rgba(232,76,136,0.22);
+
+  --row-y: 12px;
+  --row-x: 14px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--mono);
+  background: transparent;
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ============================================================
+   DROPDOWN SHELL
+   ============================================================ */
+
+.dropdown {
+  width: 380px;
+  background: var(--bg-pane);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  /* shadow removed — was creating a visible dark halo below the panel
+     against bright desktops. Use a subtle inset highlight only. */
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--fg);
+}
+
+.dd-head {
+  padding: 14px 16px 10px 16px;
+  border-bottom: 1px solid var(--line);
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 12px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+  cursor: move;  /* visual cue — dragging is wired up in Lua via eventtap */
+}
+.dd-head .h-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--fg);
+  text-transform: lowercase;
+}
+.dd-head .h-title .tilde { color: var(--st-work); margin-right: 2px; }
+.dd-head .h-title .pid { color: var(--fg-mute); font-weight: 400; margin-left: 6px; }
+
+.dd-head .summary {
+  display: flex; gap: 10px;
+  font-size: 10.5px;
+  color: var(--fg-soft);
+}
+.dd-head .summary .sx {
+  display: flex; align-items: center; gap: 4px;
+  letter-spacing: 0.02em;
+}
+.dd-head .summary .sx .sd {
+  width: 7px; height: 7px; border-radius: 50%;
+  display: inline-block;
+}
+.dd-head .summary .sx.work  .sd { background: var(--st-work); }
+.dd-head .summary .sx.input .sd { background: var(--st-input); }
+.dd-head .summary .sx.done  .sd { background: var(--st-done); }
+
+/* ============================================================
+   SESSION LIST
+   ============================================================ */
+
+.sess-list {
+  max-height: 460px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.08) transparent;
+}
+.sess-list::-webkit-scrollbar { width: 8px; }
+.sess-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
+
+.empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--fg-mute);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+}
+
+.sess {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: var(--row-y) var(--row-x);
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s ease;
+}
+.sess:hover { background: var(--bg-pane-2); }
+.sess:last-child { border-bottom: none; }
+.sess.expanded { background: var(--bg-pane-2); }
+
+/* status indicator: a small dot + a left edge bar */
+.sess::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 0.2s;
+}
+.sess[data-status="running"]::before { background: var(--st-work); }
+.sess[data-status="pending"]::before {
+  background: var(--st-input);
+  width: 3px;
+  animation: edge-pulse 1.4s ease-in-out infinite;
+}
+.sess[data-status="done"]::before { background: var(--st-done); }
+@keyframes edge-pulse {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 1; }
+}
+
+/* Tac mascot avatar — single mascot, status drives SVG */
+.sess .av {
+  width: 36px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border-radius: 50%;
+  position: relative;
+  flex-shrink: 0;
+}
+.sess .av img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  pointer-events: none;
+  /* SVG is crisp; PNG fallback (if browser ever swaps) stays smooth */
+  image-rendering: -webkit-optimize-contrast;
+}
+/* The magenta breathing halo around Tac signals "Claude is blocked waiting
+   on a tool permission decision" — louder cue than a simple awaiting-reply.
+   Only fires when the session has pending_permission set (i.e. `needs-perm`
+   marker on the row). Plain pending (awaiting reply) stays calm. */
+.sess[data-status="pending"][data-flavor="permission"] .av {
+  animation: tac-ring 1.6s ease-out infinite;
+}
+@keyframes tac-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(232,76,136,0.65); }
+  70%  { box-shadow: 0 0 0 12px rgba(232,76,136,0); }
+  100% { box-shadow: 0 0 0 0 rgba(232,76,136,0); }
+}
+/* Inline SVG sizing — make the SVG fill the .av slot like an img would */
+.sess .av svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+.sess .mid { min-width: 0; }
+.sess .nm {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  letter-spacing: -0.005em;
+}
+/* title (first user message) is the stable session identity — big & bold */
+.sess .nm .lbl { color: var(--fg); font-weight: 600; }
+/* project + latest message live in .meta as secondary info */
+.sess .meta .proj-sub { color: var(--fg-soft); font-weight: 500; }
+.sess .meta .latest-msg { color: var(--fg-mute); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+
+.sess .meta {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-soft);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sess .meta .stx { display: inline-flex; align-items: center; gap: 4px; }
+.sess[data-status="running"] .meta .stx { color: var(--st-work); }
+.sess[data-status="pending"] .meta .stx { color: var(--st-input); }
+.sess[data-status="done"]    .meta .stx { color: var(--st-done); }
+.sess .meta .cwd { color: var(--fg-mute); }
+.sess .meta .dot { color: var(--fg-dim); }
+
+.dots-3 { display: inline-flex; gap: 2px; align-items: center; height: 8px; }
+.dots-3 i {
+  width: 3px; height: 3px;
+  background: currentColor;
+  border-radius: 50%;
+  display: inline-block;
+  animation: dot-cycle 1.2s ease-in-out infinite;
+  opacity: 0.4;
+}
+.dots-3 i:nth-child(2) { animation-delay: 0.18s; }
+.dots-3 i:nth-child(3) { animation-delay: 0.36s; }
+@keyframes dot-cycle {
+  0%, 100% { opacity: 0.3; transform: translateY(0); }
+  50%      { opacity: 1;   transform: translateY(-1.5px); }
+}
+
+.sess .right {
+  display: flex; align-items: center; gap: 8px;
+  flex-shrink: 0;
+  color: var(--fg-mute);
+  font-size: 10.5px;
+}
+.sess .right .age {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.sess .right .caret {
+  width: 14px; height: 14px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--fg-mute);
+  transition: transform 0.18s ease;
+}
+.sess.expanded .right .caret { transform: rotate(90deg); }
+
+/* ============================================================
+   EXPANDED DETAIL
+   ============================================================ */
+
+.sess-detail {
+  background: var(--bg-pane-3);
+  border-bottom: 1px solid var(--line);
+  padding: 4px 0 12px;
+  animation: detail-in 0.22s ease;
+}
+@keyframes detail-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.sess-detail .log {
+  padding: 8px 16px 4px 26px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-soft);
+  line-height: 1.55;
+  max-height: 120px;
+  overflow: hidden;
+  position: relative;
+}
+.sess-detail .log::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0; height: 24px;
+  background: linear-gradient(180deg, transparent, var(--bg-pane-3));
+  pointer-events: none;
+}
+.sess-detail .log .ln {
+  display: block;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sess-detail .log .ln .pfx { color: var(--fg-mute); margin-right: 8px; }
+.sess-detail .log .ln.assistant { color: #d4d2c9; }
+.sess-detail .log .ln.tool      { color: var(--st-work); }
+.sess-detail .log .empty-log    { color: var(--fg-mute); font-style: italic; }
+
+.sess-detail .action {
+  margin: 8px 16px 0 26px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+/* Permission card (v0.2: display only, no buttons) */
+.action.permission {
+  background: rgba(232,76,136,0.06);
+  border: 1px solid rgba(232,76,136,0.22);
+}
+.action.permission .ptitle {
+  color: var(--st-input);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  display: flex; align-items: center; gap: 6px;
+}
+.action.permission .ptitle::before {
+  content: ''; width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--st-input);
+  box-shadow: 0 0 8px var(--st-input);
+}
+.action.permission .preason {
+  color: #f4d8e3;
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+.action.permission .pcmd {
+  background: #050608;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #d4d2c9;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.action.permission .pcmd .ps { color: var(--st-input); margin-right: 6px; }
+
+/* v0.3: remote Allow/Deny buttons — clicking answers the blocked
+   PermissionRequest hook via ~/.claude-menubar/decisions/<sid>.json */
+.action.permission .pbtns {
+  display: flex; gap: 8px;
+  margin-top: 8px;
+}
+.action.permission .pbtn {
+  flex: 1;
+  padding: 6px 0;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+.action.permission .pbtn:hover { filter: brightness(1.2); }
+.action.permission .pbtn.allow {
+  background: rgba(74,222,128,0.14);
+  border-color: rgba(74,222,128,0.35);
+  color: var(--st-done);
+}
+.action.permission .pbtn.deny {
+  background: rgba(232,76,136,0.10);
+  border-color: rgba(232,76,136,0.30);
+  color: var(--st-input);
+}
+.action.permission .premote {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--fg-mute);
+  text-align: right;
+}
+.action.permission .pexpired {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.04);
+  border: 1px dashed rgba(255,255,255,0.14);
+  color: var(--fg-mute);
+  font-size: 11px;
+}
+
+/* pending without permission detail: pure waiting text */
+.action.waiting {
+  background: rgba(232,76,136,0.04);
+  border: 1px solid rgba(232,76,136,0.16);
+  color: #f4d8e3;
+  font-size: 11.5px;
+}
+.action.waiting b { color: var(--st-input); font-weight: 600; }
+
+/* working summary */
+.action.working {
+  background: rgba(245,165,36,0.05);
+  border: 1px solid rgba(245,165,36,0.18);
+  display: flex; align-items: center; gap: 12px;
+}
+.action.working .wtitle {
+  flex: 1;
+  font-size: 11.5px;
+  color: var(--fg);
+}
+.action.working .wtitle .wsub {
+  display: block;
+  font-size: 10px;
+  color: var(--fg-mute);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.action.working .spinner {
+  width: 12px; height: 12px;
+  border: 2px solid rgba(245,165,36,0.25);
+  border-top-color: var(--st-work);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* done */
+.action.complete {
+  background: rgba(74,222,128,0.05);
+  border: 1px solid rgba(74,222,128,0.18);
+  color: var(--fg);
+  font-size: 11.5px;
+}
+.action.complete .ctitle {
+  color: var(--st-done);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+
+.dd-foot {
+  border-top: 1px solid var(--line);
+  padding: 8px 14px;
+  display: flex; align-items: center; justify-content: space-between;
+  background: rgba(0,0,0,0.18);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-mute);
+}
+.dd-foot .actions { display: flex; gap: 4px; }
+.dd-foot .fbtn {
+  background: transparent;
+  border: none;
+  color: var(--fg-soft);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+.dd-foot .fbtn:hover { background: rgba(255,255,255,0.05); color: var(--fg); }
+
+.dd-foot .heart .live {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--st-done);
+  margin-right: 5px;
+  vertical-align: 1px;
+  animation: heart 1.6s ease-in-out infinite;
+}
+@keyframes heart {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 1; }
+}

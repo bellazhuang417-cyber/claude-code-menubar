@@ -65,14 +65,14 @@ macOS 菜单栏图标
   "sessions": {
     "6867152e-9055-46e6-838f-33968015e76c": {
       "state": "pending",
-      "project": "AI cowork space",
+      "project": "demo-project",
       "label": "帮我加一个菜单栏通知…",
       "updated_at": 1745840000,
-      "transcript_path": "/Users/bella/.claude/projects/.../xxx.jsonl"
+      "transcript_path": "~/.claude/projects/.../xxx.jsonl"
     },
     "89a51fec-a77f-414a-9746-b54db179cb3b": {
       "state": "running",
-      "project": "play-product-schema",
+      "project": "demo-project-b",
       "label": "Content Health Check V7 迭代…",
       "updated_at": 1745840010,
       "transcript_path": "..."

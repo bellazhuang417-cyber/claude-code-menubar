@@ -1,79 +1,98 @@
 # Claude Code Menubar
 
-在 macOS 菜单栏显示 Claude Code 当前状态，让你不盯屏幕也能知道 Claude 什么时候在等你、什么时候跑完了。**支持多会话**：同时开多个 Claude 窗口时，菜单栏下拉会列出每个会话各自的进度，一眼看出"是哪个在等你"。
+macOS 菜单栏 Claude Code 状态显示器。**v0.2 改用 Hammerspoon + WebView 重构**，渲染保真度大幅提升；v0.1 的 SwiftBar 路线已弃用（`plugin/claude.1s.py` 留作历史参考）。
 
-## 状态图标
+定位（v0.3 起升级）：**状态显示器 + 权限遥控器**。它回答「现在有几个 session、谁在等我、等的是什么」，并且权限确认（Allow/Deny）可以直接在面板或 macOS 通知里点掉，不用切窗口。其他操作（回消息）仍然切到对应窗口处理。
 
-| 状态 | 图标 | 含义 |
+## v0.3 新增
+
+### 1. 远程 Allow / Deny（权限遥控）
+
+Claude Code 弹权限确认时：
+
+- **macOS 通知**：弹出「Claude 需要权限 · 项目名」，带 `Allow` 按钮和 `Deny` 下拉项，点了直接生效
+- **下拉面板**：权限卡片带 ✓ Allow / ✗ Deny 按钮
+
+原理：`PermissionRequest` hook 挂起等待 `~/.claude-menubar/decisions/<session_id>.json`，菜单栏写入决策后 hook 通过 stdout JSON 直接回答 Claude Code（官方 hook decision 机制）。默认等 120 秒（`CLAUDE_MENUBAR_DECISION_WAIT` 可调，需同步改 app.js 的 `REMOTE_WINDOW`），超时或 Hammerspoon 没在跑就回退到窗口内正常弹窗——原有流程永远兜底。
+
+**为什么只等 120 秒**：hook 挂起期间，Claude Code 窗口内的权限弹窗也会被挂起（官方行为）。等太久 = 你在窗口里也看不到弹窗。120 秒是「够你在通知/面板点一下」和「不长时间卡住窗口流程」的折中。**超过 120 秒后**：面板卡片的按钮会替换成「远程确认已超时——请到窗口处理」提示，系统通知自动收回，不会出现点了没反应的死按钮。
+
+JS→Lua 通信走 WKWebView 官方 message handler（`hs.webview.usercontent`）；旧的 `hammerspoon://` 伪导航被现代 WebKit 静默拦截（v0.2 面板点击失灵的根因），仅留作 fallback。桥的每条消息都会记录到 `~/.claude-menubar/menubar.log`，排障先看这个文件。
+
+> ⚠️ 通知按钮需要把 Hammerspoon 的通知样式设为 **Alerts（提醒）**：系统设置 → 通知 → Hammerspoon → 提醒。Banner 样式按钮悬停才出现。
+
+### 1.5 桌面宠物（v0.3.1）
+
+有会话进入「等你确认」状态时，Tac 会从屏幕右下角跑出来，气泡喊「主子，有需求等你确认！」，副标题显示项目名：
+
+- **点宠物身体** → 直接打开菜单栏面板处理
+- **点气泡上的 ×** → 本批需求不再打扰；有**新**需求时会再跑出来
+- **需求全部处理完** → 自动离场
+- 同一批需求只出场一次，不会每 5 秒重复动画
+
+实现：独立的透明无边框 webview（`pet.lua`），复用 `web/assets/tac-needs-input.svg`（内联 SMIL 动画），走同样的 `usercontent` message bridge。
+
+**称呼规则**：气泡里怎么叫你，按优先级取
+1. `~/.claude-menubar/config.json` 里的 `pet_name`（如 `{"pet_name": "Bella"}`）
+2. 没有配置时自动用 macOS 用户名（`$USER`）——发版后其他使用者装上即被用自己的用户名称呼，无需配置
+
+### 2. 状态准确性：transcript 对账
+
+hooks 是事件流，事件会丢（插件安装前就开着的 session 不带新 hooks、hook 进程被杀、时序竞争）。v0.3 起每 5 秒 tick 时对比 transcript JSONL 的实际最新事件：transcript 比最后一次 hook 写入新，就以 transcript 为准重新推导状态（用户已回复 → running；工具结果已落盘 → running；最后是 Claude 的文本回答 → done）。
+
+### 3. 状态语义修正
+
+**Stop（回答完成）不再显示为 pending**。之前每个聊完的会话都挂着「needs reply」，看起来像在等你。现在：
+
+| 状态 | 含义 |
+|------|------|
+| pending | **真的在等你操作**：权限 Allow/Deny、AskUserQuestion 选择 |
+| done ✓ | 回答完成，30 分钟后淡出为 idle |
+| running | 干活中 |
+
+## 菜单栏图标
+
+| 状态 | 文字 | 含义 |
 |------|------|------|
-| 闲置 | 💤 | Claude 在睡觉，没活儿 |
-| 运行中 | 🤖 ↔ ⚙️ | Claude 在调工具干活（每秒交替） |
-| **等你确认** | 👀 ↔ 🙈 | **Claude 在等你批权限**（每秒闪烁） |
-| 完成 | 🎉 | 刚回答完，30 秒后回到 💤 |
+| idle | （无） | 没有活跃 session |
+| running | ` N` | N 个 session 在调工具干活 |
+| **pending** | ` N!` ↔ ` N ` | **N 个 session 在等你确认**（1Hz 闪烁） |
+| done | ` ✓` | 刚回答完，30 分钟后回到 idle |
 
-全程无声，不打扰。
+## 下拉面板
 
-## 多会话视图
+点击菜单栏图标在图标正下方弹出 380px 浮动 WebView：
 
-菜单栏图标永远显示**优先级最高**的状态（pending > running > done > idle）。点开下拉能看到每个活跃会话：
-
-```
-👀 ↔ 🙈                          ← 有 1 个会话在等你，图标闪
-─────────────────────────────────
-Claude Code · 3 个会话
-─────────────────────────────────
-👀  帮我加一个菜单栏通知…
-— 等你确认 · AI cowork space · 刚刚
-🤖  Content Health Check V7 迭代…
-— 干活中 · AI cowork space · 12 秒前
-🎉  提取飞书文档数据…
-— 完成了 · play-product-schema · 2 分钟前
-```
-
-会话标题取自你在该 session 里发的**第一句话**的前 40 字。超过 30 分钟没活动的会话会自动从列表里隐藏。
+- Header：`~claude-code · N sessions` + 三色状态计数（run / wait / done）
+- Session 列表：每条显示状态色条 + 项目名 + label + 相对时间，**pending 永远置顶**
+- 点击 session 行展开：最近 4–6 行 transcript log + 状态相关内容（permission 卡片 / running spinner / done 文案）
+- Footer：Open status file / Quit
 
 ## 安装
 
 ```bash
-git clone https://github.com/<你的用户名>/claude-code-menubar.git
+git clone https://github.com/<your-user>/claude-code-menubar.git
 cd claude-code-menubar
 ./install.sh
 ```
 
-脚本会自动：
-1. 装 [SwiftBar](https://swiftbar.app/)（通过 Homebrew；已装则跳过）
-2. 把插件拷进 SwiftBar 插件目录
-3. 把 hook 脚本装到 `~/.claude-menubar/`
-4. 把 hook 配置合并进 `~/.claude/settings.json`（会备份原文件）
-5. 启动 SwiftBar
+脚本会：
 
-## 要求
+1. 通过 Homebrew 安装 Hammerspoon（已装则跳过）
+2. 把 lua + web 资源拷到 `~/.hammerspoon/claude-menubar/`
+3. 把 hooks 拷到 `~/.claude-menubar/`
+4. 在 `~/.hammerspoon/init.lua` 追加 require 块（用 marker 防重复）
+5. 合并 hooks 到 `~/.claude/settings.json`（PreToolUse → running / Notification → pending / Stop → done）
+6. 把 Hammerspoon 加进 Login Items（重启后自启动）
+7. 启动 Hammerspoon
 
-- macOS
-- Homebrew（装 SwiftBar 用；已自己装过 SwiftBar 的可跳过）
-- Claude Code CLI
-- Python 3（macOS 自带）
+**首次启动需要 Accessibility 权限**：
 
-## 工作原理
-
-```
-Claude Code 事件（带 session_id + transcript_path）
-    ↓ (Notification / Stop / PreToolUse hook, JSON via stdin)
-~/.claude-menubar/update_status.py
-    ↓ 读 transcript 抽首条用户消息当 label
-    ↓ 按 session_id 聚合写入（文件锁防并发）
-~/.claude-menubar/status.json  { sessions: { id1: {...}, id2: {...} } }
-    ↑ 每秒读
-SwiftBar 插件 (claude.1s.py)
-    ↓
-菜单栏图标 + 下拉会话列表
+```bash
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
 ```
 
-- `Notification` hook → `pending`（Claude 需要权限时触发）
-- `Stop` hook → `done`（Claude 回答完成时触发）
-- `PreToolUse` hook → `running`（Claude 调用工具时触发）
-
-优先级：`pending` > `done` > `running` > `idle`
+授权后菜单栏 cc 图标会出现。
 
 ## 卸载
 
@@ -81,10 +100,71 @@ SwiftBar 插件 (claude.1s.py)
 ./uninstall.sh
 ```
 
-## 自定义图标
+清除 `~/.hammerspoon/claude-menubar/`、`~/.claude-menubar/`、`~/.claude/settings.json` 里的 hooks、Hammerspoon 登录项（会询问），可选保留 Hammerspoon 本体。
 
-编辑 `plugin/claude.1s.py` 里的 `ICONS` 字典，每个状态是一个 `(图标A, 图标B)` 元组，菜单栏会按秒交替显示。不想闪的话把两个图标写成一样就行。
+## 预览视觉（不装 Hammerspoon）
+
+把 `hammerspoon/claude-menubar/web/app.js` 顶部的 `MOCK_MODE = false` 改成 `true`，然后在浏览器里打开 `hammerspoon/claude-menubar/web/index.html`，会看到 4 条假 session 渲染出来，覆盖 pending（含 permission 卡片）/ pending（无 permission）/ running / done 全部状态。
+
+## 故障排除
+
+- **菜单栏没图标**：打开 Hammerspoon Console（菜单栏 Hammerspoon → Console）看 `[claude-menubar] started` 是否打印；没有就检查 `~/.hammerspoon/init.lua` 里的 require 块是否存在。
+- **点图标 WebView 不弹**：检查 Accessibility 权限。Hammerspoon Console 应该会有 alert。
+- **WebView 中文糊**：CSS 字体栈已显式列 `"PingFang SC"`，正常应不会糊；如果还糊，看是不是 Hammerspoon 在用很老的 macOS 版本。
+- **status.json 不更新**：在 VS Code Claude Code 调一次工具，看 `cat ~/.claude-menubar/status.json` 有没有新 session 条目。没有就检查 `~/.claude/settings.json` 里 hooks 配置。
+
+## 目录结构
+
+```
+claude-code-menubar/
+├── README.md
+├── PRD.md             ← v0.1 PRD（保留）
+├── PRD_v0.2.md        ← v0.2 PRD
+├── install.sh         ← v0.2 安装脚本
+├── uninstall.sh
+├── hammerspoon/
+│   ├── init-loader.lua    ← init.lua 里追加的代码片段（参考）
+│   └── claude-menubar/
+│       ├── init.lua       ← 入口 + 渲染调度
+│       ├── menubar.lua    ← 菜单栏图标 + title 三态
+│       ├── webview.lua    ← WebView 生命周期 + URL scheme bridge
+│       ├── transcript.lua ← JSONL 解析（log tail）
+│       └── web/
+│           ├── index.html
+│           ├── styles.css
+│           └── app.js
+├── hooks/
+│   ├── update_status.py   ← 复用 v0.1，加 schema_version / cwd / pending_permission 字段
+│   └── clear.sh
+└── plugin/                ← v0.1 SwiftBar 实现，已弃用，保留作历史参考
+    └── claude.1s.py
+```
+
+## 状态文件 schema (v0.2)
+
+`~/.claude-menubar/status.json`：
+
+```json
+{
+  "schema_version": 2,
+  "sessions": {
+    "<session_id>": {
+      "state": "running|pending|done",
+      "project": "demo-project",
+      "label": "最近用户消息前 40 字",
+      "updated_at": 1747800000,
+      "transcript_path": "/Users/.../*.jsonl",
+      "cwd": "/Users/you/Projects/demo-project",
+      "pending_permission": null
+    }
+  }
+}
+```
+
+`pending_permission` 由 PermissionRequest hook 从 payload 解析 tool / command / reason / requested_at，WebView 里展示为可操作的 permission 卡片（v0.3 起带 Allow/Deny 按钮）。
+
+远程决策文件：`~/.claude-menubar/decisions/<session_id>.json`，内容 `{"behavior": "allow"|"deny", "ts": <epoch>}`。由面板按钮或 macOS 通知写入，挂起中的 PermissionRequest hook 轮询消费后即删除。
 
 ## License
 
-MIT
+见 `LICENSE`。
