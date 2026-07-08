@@ -292,6 +292,13 @@ def main():
         sessions = data.setdefault("sessions", {})
         entry = sessions.get(session_id, {})
 
+        # Turn timing: running_since is stamped when a turn starts and cleared
+        # on Stop, which records turn_duration. The menubar uses turn_duration
+        # to announce long-task completions (pet + notification) while staying
+        # silent for quick back-and-forth turns.
+        running_since = entry.get("running_since")
+        turn_duration = entry.get("turn_duration")
+
         # Re-derive title and label every event so they stay fresh.
         msgs = _collect_user_messages(transcript_path)
         latest = truncate(msgs[-1]) if msgs else (entry.get("label") or project)
@@ -344,6 +351,9 @@ def main():
             # Allow/Deny and mid-turn questions (AskUserQuestion / plan mode).
             new_state = "done"
             pending_permission = None
+            if running_since:
+                turn_duration = max(0, now - int(running_since))
+            running_since = None
         elif cmd == "notification":
             # Notification fires for several reasons. Only some mean "blocked
             # waiting on the user"; we inspect the message text to decide.
@@ -374,6 +384,8 @@ def main():
             # Claude turn. Clear the awaiting state and go back to running.
             new_state = "running"
             pending_permission = None
+            running_since = now      # new turn starts
+            turn_duration = None
         else:
             # Legacy sub-commands: running / pending / done / idle.
             # These map directly to state strings.
@@ -384,6 +396,10 @@ def main():
                 pending_permission = None
             else:  # running
                 pending_permission = entry.get("pending_permission")
+                if not running_since:
+                    # Session started before we saw UserPromptSubmit (e.g.
+                    # plugin installed mid-session) — start the clock here.
+                    running_since = now
 
         sessions[session_id] = {
             "state": new_state,
@@ -394,6 +410,8 @@ def main():
             "transcript_path": transcript_path,
             "cwd": cwd,
             "pending_permission": pending_permission,
+            "running_since": running_since,
+            "turn_duration": turn_duration,
         }
         save_state(data)
 

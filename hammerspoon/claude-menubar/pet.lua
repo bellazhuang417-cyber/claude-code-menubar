@@ -29,9 +29,16 @@ local function escapeHtml(s)
     return (s:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
 end
 
-local function buildHtml(webDir, text, subtext)
-    local tac = loadSvgRaw(webDir, "tac-needs-input.svg")
-    return [[<!doctype html><html><head><meta charset="utf-8"><style>
+-- mood: "input" (pink, needs-you) | "done" (green, celebration)
+local MOODS = {
+    input = { svg = "tac-needs-input.svg", accent = "232,76,136" },
+    done  = { svg = "tac-complete.svg",    accent = "74,222,128" },
+}
+
+local function buildHtml(webDir, text, subtext, mood)
+    local m = MOODS[mood or "input"] or MOODS.input
+    local tac = loadSvgRaw(webDir, m.svg)
+    local html = [[<!doctype html><html><head><meta charset="utf-8"><style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { background: transparent; overflow: hidden; width: 100%; height: 100%; }
   body { font-family: "PingFang SC", -apple-system, sans-serif; -webkit-user-select: none; }
@@ -98,7 +105,7 @@ local function buildHtml(webDir, text, subtext)
       ]] .. (subtext and subtext ~= "" and ('<div class="sub">' .. escapeHtml(subtext) .. '</div>') or "") .. [[
     </div>
     <div class="tac">]] .. tac .. [[</div>
-  </div>
+  </div><!-- accent swapped per mood below -->
   <script>
     function send(action) {
       if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.claudePet) {
@@ -114,6 +121,12 @@ local function buildHtml(webDir, text, subtext)
     });
   </script>
 </body></html>]]
+    -- The template's accent literals are the pink "input" values; swap the
+    -- rgb triplet for the mood's accent (green for "done").
+    if m.accent ~= MOODS.input.accent then
+        html = html:gsub("232,76,136", m.accent)
+    end
+    return html
 end
 
 -- create(opts) -> pet object
@@ -143,11 +156,12 @@ function M.create(opts)
     return pet
 end
 
--- show(pet, text, subtext) — (re)loads the HTML so the walk-in animation
--- replays, positions bottom-right of the main screen, and shows the window.
-function M.show(pet, text, subtext)
+-- show(pet, text, subtext, mood) — (re)loads the HTML so the walk-in
+-- animation replays, positions bottom-right of the main screen, and shows
+-- the window. mood: "input" (default, pink) | "done" (green celebration).
+function M.show(pet, text, subtext, mood)
     if not pet or not pet.view then return end
-    local html = buildHtml(pet.opts.webDir, text or "A request needs your approval!", subtext)
+    local html = buildHtml(pet.opts.webDir, text or "A request needs your approval!", subtext, mood)
     pet.view:html(html)
     local frame = hs.screen.mainScreen():frame()  -- excludes menubar; includes dock side
     pet.view:frame({

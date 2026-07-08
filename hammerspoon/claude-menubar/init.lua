@@ -36,6 +36,8 @@ local state = {
     webviewVisible = false,
     lastToggleAt = 0,     -- epoch ms, debounce guard for R1
     blinkPhase = false,   -- pending title flip flag
+    doneAnnounced = {},   -- "sid:updated_at" → true, long-task pings already sent
+    petMode = nil,        -- nil | "pending" | "done" — what the pet is showing
 }
 
 -- ---------- JSON loading ----------
@@ -291,23 +293,38 @@ local function petSignature(list)
     return table.concat(parts, "|")
 end
 
--- How the pet addresses the user. Priority:
---   1. "pet_name" in ~/.claude-menubar/config.json (per-user override)
---   2. macOS username ($USER) — so a fresh install greets whoever installed it
-local petNameCache = nil
-local function petName()
-    if petNameCache then return petNameCache end
+-- ~/.claude-menubar/config.json — optional per-user settings:
+--   pet_name           : how the pet addresses you (default: macOS $USER)
+--   long_task_seconds  : announce completions for turns that ran at least
+--                        this long (default 120; quick Q&A stays silent)
+local configCache = nil
+local function menubarConfig()
+    if configCache then return configCache end
+    local cfg = {}
     local f = io.open(os.getenv("HOME") .. "/.claude-menubar/config.json", "r")
     if f then
         local raw = f:read("*a"); f:close()
-        local ok, cfg = pcall(hs_json.decode, raw)
-        if ok and type(cfg) == "table" and type(cfg.pet_name) == "string" and cfg.pet_name ~= "" then
-            petNameCache = cfg.pet_name
-            return petNameCache
-        end
+        local ok, d = pcall(hs_json.decode, raw)
+        if ok and type(d) == "table" then cfg = d end
     end
-    petNameCache = os.getenv("USER") or "主子"
-    return petNameCache
+    configCache = cfg
+    return cfg
+end
+
+local function petName()
+    local n = menubarConfig().pet_name
+    if type(n) == "string" and n ~= "" then return n end
+    return os.getenv("USER") or "master"
+end
+
+local function formatDur(seconds)
+    seconds = math.max(0, math.floor(seconds or 0))
+    if seconds >= 3600 then
+        return string.format("%dh%02dm", math.floor(seconds / 3600), math.floor(seconds % 3600 / 60))
+    elseif seconds >= 60 then
+        return string.format("%dm", math.floor(seconds / 60))
+    end
+    return string.format("%ds", seconds)
 end
 
 local function petTextFor(list)
@@ -339,9 +356,12 @@ local function updatePet(list)
     end
     local sig = petSignature(list)
     if sig == "" then
-        if state.petObj.visible then
+        -- Only auto-hide the "needs you" pet here; a "done" celebration is
+        -- managed by its own timer in announceDone.
+        if state.petObj.visible and state.petMode == "pending" then
             mlog("pet: all clear → hide")
             pet.hide(state.petObj)
+            state.petMode = nil
         end
         state.petShownSig = nil
         state.petDismissedSig = nil
@@ -354,6 +374,63 @@ local function updatePet(list)
         local ok, err = pcall(pet.show, state.petObj, text, sub)
         if not ok then mlog("pet: show ERROR: %s", tostring(err)) end
         state.petShownSig = sig
+        state.petMode = "pending"
+    end
+end
+
+-- ---------- Long-task completion announcements ----------
+-- A turn that ran ≥ long_task_seconds and just hit Stop deserves a ping:
+-- macOS notification always (stays in Notification Center if Bella is away),
+-- pet celebration when the pet isn't already busy calling out a pending item.
+local DONE_PET_LINGER = 25  -- seconds the celebration stays on screen
+
+local function announceDone(list)
+    if not state.petObj then return end
+    local threshold = tonumber(menubarConfig().long_task_seconds) or 120
+    local seen = {}
+    for _, s in ipairs(list) do
+        seen[s.session_id] = true
+        if s.effective_state == "done" and (s.turn_duration or 0) >= threshold then
+            local key = s.session_id .. ":" .. tostring(s.updated_at)
+            if not state.doneAnnounced[key] then
+                state.doneAnnounced[key] = true
+                local dur = formatDur(s.turn_duration)
+                mlog("done: announce %s (%s, ran %s)", s.session_id, s.project or "?", dur)
+                local note = hs.notify.new(function(n)
+                    if n:activationType() ~= hs.notify.activationTypes.none then
+                        M.showWebView()
+                    end
+                end, {
+                    title = "Task finished ✓ · " .. (s.project or "session"),
+                    informativeText = (s.title or s.label or "") .. "  (ran " .. dur .. ")",
+                    withdrawAfter = 0,
+                })
+                note:send()
+                local petBusy = state.petObj.visible and state.petMode == "pending"
+                if not petBusy then
+                    local ok, err = pcall(pet.show, state.petObj,
+                        string.format("%s, task finished ✓", petName()),
+                        (s.project or "session") .. " · ran " .. dur, "done")
+                    if not ok then
+                        mlog("pet: done-show ERROR: %s", tostring(err))
+                    else
+                        state.petMode = "done"
+                        if state.petDoneTimer then state.petDoneTimer:stop() end
+                        state.petDoneTimer = hs.timer.doAfter(DONE_PET_LINGER, function()
+                            if state.petObj and state.petObj.visible and state.petMode == "done" then
+                                pet.hide(state.petObj)
+                                state.petMode = nil
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+    end
+    -- Forget announcements for sessions that left the list (TTL / SessionEnd).
+    for key in pairs(state.doneAnnounced) do
+        local sid = key:match("^(.-):%d+$") or key
+        if not seen[sid] then state.doneAnnounced[key] = nil end
     end
 end
 
@@ -371,6 +448,7 @@ local function render()
     menubar.update(state.menubarItem, top, #list, state.blinkPhase)
     notifyPermissions(list)
     updatePet(list)
+    announceDone(list)
 
     if state.webviewVisible then
         webview.pushSessions(state.webviewObj, list, top)
@@ -400,12 +478,14 @@ function M.start()
             -- Pet clicked → open the panel right where the action is.
             state.petDismissedSig = state.petShownSig
             pet.hide(state.petObj)
+            state.petMode = nil
             M.showWebView()
         end,
         onDismiss = function()
             -- × clicked → stay quiet until a NEW pending request appears.
             state.petDismissedSig = state.petShownSig
             pet.hide(state.petObj)
+            state.petMode = nil
         end,
     })
 
