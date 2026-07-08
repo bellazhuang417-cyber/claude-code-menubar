@@ -3,3 +3,5 @@
 *.bak.*
 __pycache__/
 *.pyc
+
+# Personal skins go in ~/.claude-menubar/skins/, never in the repo

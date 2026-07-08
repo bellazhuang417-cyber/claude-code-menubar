@@ -35,9 +35,97 @@ local MOODS = {
     done  = { svg = "tac-complete.svg",    accent = "74,222,128" },
 }
 
-local function buildHtml(webDir, text, subtext, mood)
+-- ---------- Skin loading ----------
+-- A skin lives at ~/.claude-menubar/skins/<name>/ and contains:
+--   - manifest.json (frame size, animation ranges per mood)
+--   - spritesheet.webp / .png
+-- The special skin "tac" is the built-in SVG and doesn't need files.
+-- Skins are personal — no third-party asset is shipped with the repo.
+local function loadSkinManifest(name)
+    if not name or name == "tac" then return nil end
+    local dir = os.getenv("HOME") .. "/.claude-menubar/skins/" .. name .. "/"
+    local raw = readFile(dir .. "manifest.json")
+    if not raw then return nil end
+    local ok, mf = pcall(hs.json.decode, raw)
+    if not ok or type(mf) ~= "table" then return nil end
+    mf.dir = dir
+    mf.name = name
+    return mf
+end
+
+-- Base64-encode a file's bytes. Cached per skin so we don't re-read
+-- 2 MB from disk every time the pet reappears.
+local base64Cache = {}
+local function spriteDataUrl(mf)
+    local key = mf.dir .. mf.spritesheet
+    local cached = base64Cache[key]
+    if cached then return cached end
+    local path = mf.dir .. mf.spritesheet
+    local f = io.open(path, "rb")
+    if not f then return "" end
+    local data = f:read("*a"); f:close()
+    local ok, b64 = pcall(hs.base64.encode, data)
+    if not ok or not b64 then return "" end
+    -- hs.base64.encode inserts line breaks; strip them for a valid data URL.
+    b64 = b64:gsub("%s+", "")
+    local mime = "image/webp"
+    if path:sub(-4) == ".png" then mime = "image/png"
+    elseif path:sub(-4) == ".jpg" or path:sub(-5) == ".jpeg" then mime = "image/jpeg" end
+    local url = "data:" .. mime .. ";base64," .. b64
+    base64Cache[key] = url
+    return url
+end
+
+local function buildSpriteBody(mf, mood)
+    -- CSS sprite-strip animation. We scale the whole spritesheet down so one
+    -- frame fits the requested display size, then animate background-position
+    -- across N adjacent frames on the given row. steps(N) keeps frame edges
+    -- crisp (no interpolation blur).
+    local anim = (mf.animations or {})[mood] or mf.animations.input or {}
+    local fw, fh = mf.frame.w, mf.frame.h
+    local dw, dh = mf.display.w, mf.display.h
+    local sw, sh = mf.sheet.w, mf.sheet.h
+    local scale = dw / fw
+    local scaledW, scaledH = math.floor(sw * scale), math.floor(sh * scale)
+    local col0 = anim.col or 0
+    local row  = anim.row or 0
+    local count = anim.count or 1
+    local duration = anim.duration or 0.9
+    local startX = -col0 * dw
+    local endX   = -(col0 + count) * dw
+    local startY = -row * dh
+    -- Inline the spritesheet as a data URL so WKWebView doesn't need file://
+    -- access. Base64 encode is cached, so this is cheap after the first read.
+    local url = spriteDataUrl(mf)
+    local html = string.format([[
+    <div class="sprite" style="
+      width:%dpx; height:%dpx;
+      background: url('%s') no-repeat;
+      background-size: %dpx %dpx;
+      background-position: %dpx %dpx;
+      animation: sprite-loop %.2fs steps(%d) infinite;
+      image-rendering: -webkit-optimize-contrast;
+    "></div>
+    <style>@keyframes sprite-loop {
+      from { background-position: %dpx %dpx; }
+      to   { background-position: %dpx %dpx; }
+    }</style>]],
+        dw, dh, url, scaledW, scaledH, startX, startY, duration, count,
+        startX, startY, endX, startY)
+    return html, dw
+end
+
+local function buildHtml(webDir, text, subtext, mood, skinName)
     local m = MOODS[mood or "input"] or MOODS.input
-    local tac = loadSvgRaw(webDir, m.svg)
+    local mf = loadSkinManifest(skinName)
+    local body, bubbleShift
+    if mf then
+        body, bubbleShift = buildSpriteBody(mf, mood or "input")
+        bubbleShift = (mf.bubbleOffset or (bubbleShift / 2 + 6))
+    else
+        body = '<div class="tac">' .. loadSvgRaw(webDir, m.svg) .. '</div>'
+        bubbleShift = 34
+    end
     local html = [[<!doctype html><html><head><meta charset="utf-8"><style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { background: transparent; overflow: hidden; width: 100%; height: 100%; }
@@ -98,14 +186,20 @@ local function buildHtml(webDir, text, subtext, mood)
     50%      { transform: translateY(-5px); }
   }
   .tac svg { width: 100%; height: 100%; }
+
+  /* Sprite-based skins (winkey, muskie, …) */
+  .sprite {
+    margin-top: 6px; margin-right: 8px;
+    filter: drop-shadow(0 5px 10px rgba(0,0,0,0.4));
+  }
 </style></head><body>
   <div class="pet-wrap" id="pet">
-    <div class="bubble">
+    <div class="bubble" style="margin-right:__BUBBLE_SHIFT__px">
       <span class="close" id="pet-close">✕</span>
       <div class="txt">]] .. escapeHtml(text) .. [[</div>
       ]] .. (subtext and subtext ~= "" and ('<div class="sub">' .. escapeHtml(subtext) .. '</div>') or "") .. [[
     </div>
-    <div class="tac">]] .. tac .. [[</div>
+    ]] .. body .. [[
   </div><!-- accent swapped per mood below -->
   <script>
     function send(action) {
@@ -127,6 +221,7 @@ local function buildHtml(webDir, text, subtext, mood)
     if m.accent ~= MOODS.input.accent then
         html = html:gsub("232,76,136", m.accent)
     end
+    html = html:gsub("__BUBBLE_SHIFT__", tostring(math.floor(bubbleShift)))
     return html
 end
 
@@ -157,12 +252,14 @@ function M.create(opts)
     return pet
 end
 
--- show(pet, text, subtext, mood) — (re)loads the HTML so the walk-in
--- animation replays, positions bottom-right of the main screen, and shows
--- the window. mood: "input" (default, pink) | "done" (green celebration).
-function M.show(pet, text, subtext, mood)
+-- show(pet, text, subtext, mood, skinName) — (re)loads the HTML so the
+-- walk-in animation replays, positions bottom-right of the main screen,
+-- and shows the window. mood: "input" (default, pink) | "done" (green).
+-- skinName: nil/"tac" → built-in SVG; anything else → ~/.claude-menubar/
+-- skins/<name>/ manifest.
+function M.show(pet, text, subtext, mood, skinName)
     if not pet or not pet.view then return end
-    local html = buildHtml(pet.opts.webDir, text or "A request needs your approval!", subtext, mood)
+    local html = buildHtml(pet.opts.webDir, text or "A request needs your approval!", subtext, mood, skinName)
     pet.view:html(html)
     local frame = hs.screen.mainScreen():frame()  -- excludes menubar; includes dock side
     pet.view:frame({

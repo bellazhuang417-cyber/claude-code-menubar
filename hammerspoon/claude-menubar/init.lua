@@ -317,6 +317,37 @@ local function petName()
     return os.getenv("USER") or "master"
 end
 
+local function currentSkin()
+    local s = menubarConfig().skin
+    if type(s) == "string" and s ~= "" then return s end
+    return "tac"
+end
+
+-- Public: hs -c "claudeMenubar.setSkin('winkey')"
+-- Writes ~/.claude-menubar/config.json, invalidates the cache, forces the
+-- next pet appearance to re-render with the new skin.
+function M.setSkin(name)
+    if type(name) ~= "string" or name == "" then return "usage: setSkin('<name>')" end
+    local path = os.getenv("HOME") .. "/.claude-menubar/config.json"
+    local raw = ""
+    local f = io.open(path, "r")
+    if f then raw = f:read("*a"); f:close() end
+    local ok, cfg = pcall(hs_json.decode, raw)
+    if not ok or type(cfg) ~= "table" then cfg = {} end
+    cfg.skin = name
+    local out = io.open(path, "w")
+    if out then out:write(hs_json.encode(cfg)); out:close() end
+    configCache = nil
+    -- Force the pet to re-appear on the next tick with the new skin.
+    state.petShownSig = nil
+    state.petDismissedSig = nil
+    if state.petObj and state.petObj.visible then
+        pet.hide(state.petObj); state.petMode = nil
+    end
+    mlog("skin → %s", name)
+    return "skin=" .. name
+end
+
 local function formatDur(seconds)
     seconds = math.max(0, math.floor(seconds or 0))
     if seconds >= 3600 then
@@ -370,8 +401,9 @@ local function updatePet(list)
     if sig == state.petShownSig or sig == state.petDismissedSig then return end
     local text, sub = petTextFor(list)
     if text then
-        mlog("pet: show '%s' (%s)", text, sub or "")
-        local ok, err = pcall(pet.show, state.petObj, text, sub)
+        local skin = currentSkin()
+        mlog("pet: show '%s' (%s) skin=%s", text, sub or "", skin)
+        local ok, err = pcall(pet.show, state.petObj, text, sub, "input", skin)
         if not ok then mlog("pet: show ERROR: %s", tostring(err)) end
         state.petShownSig = sig
         state.petMode = "pending"
@@ -414,7 +446,8 @@ local function announceDone(list)
                     local taskName = s.title or s.label or s.project or "session"
                     local ok, err = pcall(pet.show, state.petObj,
                         string.format("%s, task finished ✓", petName()),
-                        taskName .. "  ·  " .. (s.project or "") .. " · ran " .. dur, "done")
+                        taskName .. "  ·  " .. (s.project or "") .. " · ran " .. dur,
+                        "done", currentSkin())
                     if not ok then
                         mlog("pet: done-show ERROR: %s", tostring(err))
                     else
