@@ -79,7 +79,8 @@ local function buildHtml(webDir, text, subtext, mood)
   }
   .bubble .txt { color: #f4e9ee; font-size: 13px; font-weight: 600; line-height: 1.4; }
   .bubble .sub { color: #9a93a5; font-size: 11px; margin-top: 3px; line-height: 1.35;
-                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+                 overflow: hidden; max-width: 200px;
+                 display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .bubble .close {
     position: absolute; top: 5px; right: 7px;
     color: #6d6878; font-size: 13px; line-height: 1; padding: 3px;

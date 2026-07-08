@@ -408,9 +408,12 @@ local function announceDone(list)
                 note:send()
                 local petBusy = state.petObj.visible and state.petMode == "pending"
                 if not petBusy then
+                    -- Lead with the task name (session title / first user
+                    -- message) so it's obvious WHICH task just finished.
+                    local taskName = s.title or s.label or s.project or "session"
                     local ok, err = pcall(pet.show, state.petObj,
                         string.format("%s, task finished ✓", petName()),
-                        (s.project or "session") .. " · ran " .. dur, "done")
+                        taskName .. "  ·  " .. (s.project or "") .. " · ran " .. dur, "done")
                     if not ok then
                         mlog("pet: done-show ERROR: %s", tostring(err))
                     else
@@ -704,6 +707,20 @@ function M.backfillFromDesktopSessions(maxAgeSeconds)
     local wf = io.open(M.statusFile, "w")
     if wf then wf:write(encoded); wf:close() end
     return #toAdd
+end
+
+-- Debug helper: inspect the pet object from `hs -c`.
+function M.petDebug()
+    if not state.petObj then return "petObj=NIL" end
+    local v = state.petObj.view
+    local out = string.format("view=%s visible=%s mode=%s",
+        v and "ok" or "NIL", tostring(state.petObj.visible), tostring(state.petMode))
+    if v then
+        local f = v:frame()
+        out = out .. string.format(" frame=(%d,%d %dx%d) shown=%s",
+            f.x, f.y, f.w, f.h, tostring(v:isVisible()))
+    end
+    return out
 end
 
 -- Debug helper: run JS inside the panel webview from `hs -c`. Result lands in
