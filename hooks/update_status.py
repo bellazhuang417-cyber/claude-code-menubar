@@ -359,6 +359,8 @@ def main():
             # waiting on the user"; we inspect the message text to decide.
             message = (payload.get("message") or "").lower()
             prev_state = entry.get("state", "running")
+            suppress_stock = False  # set below when we want to ask Claude
+                                    # Code to skip its own system notification
             if "permission" in message:
                 # Permission prompt (backup path — PermissionRequest hook is
                 # the primary writer and carries tool/command details).
@@ -375,6 +377,10 @@ def main():
                 else:
                     new_state = "pending"
                     pending_permission = entry.get("pending_permission")
+                # Note: Claude Code's Notification event is a pure display
+                # signal — hooks cannot suppress the OS banner. Users who
+                # want the pet as the sole channel should silence Claude
+                # Code at the macOS level (System Settings → Notifications).
             else:
                 # Unknown notification type — don't guess, keep state as-is.
                 new_state = prev_state

@@ -260,7 +260,7 @@ local function notifyPermissions(list)
                     alwaysShowAdditionalActions = true,
                     withdrawAfter = 0,
                 })
-                note:send()
+                pcall(function() note:send() end)
                 state.permNotes[sid] = { key = key, note = note }
             end
         else
@@ -396,16 +396,17 @@ local function announceDone(list)
                 state.doneAnnounced[key] = true
                 local dur = formatDur(s.turn_duration)
                 mlog("done: announce %s (%s, ran %s)", s.session_id, s.project or "?", dur)
-                local note = hs.notify.new(function(n)
-                    if n:activationType() ~= hs.notify.activationTypes.none then
-                        M.showWebView()
-                    end
-                end, {
-                    title = "Task finished ✓ · " .. (s.project or "session"),
-                    informativeText = (s.title or s.label or "") .. "  (ran " .. dur .. ")",
-                    withdrawAfter = 0,
-                })
-                note:send()
+                pcall(function()
+                    hs.notify.new(function(n)
+                        if n:activationType() ~= hs.notify.activationTypes.none then
+                            M.showWebView()
+                        end
+                    end, {
+                        title = "Task finished ✓ · " .. (s.project or "session"),
+                        informativeText = (s.title or s.label or "") .. "  (ran " .. dur .. ")",
+                        withdrawAfter = 0,
+                    }):send()
+                end)
                 local petBusy = state.petObj.visible and state.petMode == "pending"
                 if not petBusy then
                     -- Lead with the task name (session title / first user
@@ -509,18 +510,24 @@ function M.start()
 
     -- 1Hz title blink (pending state). Reuses cached list to avoid full re-scan
     -- every second; the 5s tick refreshes the actual data.
-    state.blinkTimer = hs.timer.doEvery(1.0, function()
+    -- NOTE: both timers use hs.timer.new(..., continueOnError=true). doEvery
+    -- kills the timer permanently on the FIRST callback error — one hiccup
+    -- (e.g. hs.notify while usernoted restarts) silently stopped all updates.
+    state.blinkTimer = hs.timer.new(1.0, function()
         state.blinkPhase = not state.blinkPhase
         local list = state.lastList or {}
         local top = topPriority(list)
         menubar.update(state.menubarItem, top, #list, state.blinkPhase)
-    end)
+    end, true)
+    state.blinkTimer:start()
 
     -- 5s tick: recompute effective state so done→idle expiry, stale sessions
     -- drop off without needing a hook to write.
-    state.tickTimer = hs.timer.doEvery(5.0, function()
-        render()
-    end)
+    state.tickTimer = hs.timer.new(5.0, function()
+        local ok, err = pcall(render)
+        if not ok then mlog("render ERROR: %s", tostring(err)) end
+    end, true)
+    state.tickTimer:start()
 
     -- ---------- Drag handle (eventtap) ----------
     -- Hammerspoon's WKWebView doesn't honor `-webkit-app-region: drag`, so we
