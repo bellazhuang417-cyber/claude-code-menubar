@@ -10,8 +10,8 @@ local M = {}
 local WIDTH, HEIGHT = 300, 200
 local MARGIN = 28   -- gap from screen bottom-right corner
 
-local function readFile(path)
-    local f = io.open(path, "r")
+local function readFile(path, binary)
+    local f = io.open(path, binary and "rb" or "r")
     if not f then return nil end
     local s = f:read("*a"); f:close()
     return s
@@ -56,23 +56,22 @@ end
 -- Base64-encode a file's bytes. Cached per skin so we don't re-read
 -- 2 MB from disk every time the pet reappears.
 local base64Cache = {}
-local function spriteDataUrl(mf)
-    local key = mf.dir .. mf.spritesheet
-    local cached = base64Cache[key]
+local function fileDataUrl(path)
+    local cached = base64Cache[path]
     if cached then return cached end
-    local path = mf.dir .. mf.spritesheet
-    local f = io.open(path, "rb")
-    if not f then return "" end
-    local data = f:read("*a"); f:close()
+    local data = readFile(path, true)
+    if not data then return "" end
     local ok, b64 = pcall(hs.base64.encode, data)
     if not ok or not b64 then return "" end
     -- hs.base64.encode inserts line breaks; strip them for a valid data URL.
     b64 = b64:gsub("%s+", "")
     local mime = "image/webp"
-    if path:sub(-4) == ".png" then mime = "image/png"
-    elseif path:sub(-4) == ".jpg" or path:sub(-5) == ".jpeg" then mime = "image/jpeg" end
+    local low = path:lower()
+    if low:sub(-4) == ".png" then mime = "image/png"
+    elseif low:sub(-4) == ".jpg" or low:sub(-5) == ".jpeg" then mime = "image/jpeg"
+    elseif low:sub(-4) == ".gif" then mime = "image/gif" end
     local url = "data:" .. mime .. ";base64," .. b64
-    base64Cache[key] = url
+    base64Cache[path] = url
     return url
 end
 
@@ -96,7 +95,7 @@ local function buildSpriteBody(mf, mood)
     local startY = -row * dh
     -- Inline the spritesheet as a data URL so WKWebView doesn't need file://
     -- access. Base64 encode is cached, so this is cheap after the first read.
-    local url = spriteDataUrl(mf)
+    local url = fileDataUrl(mf.dir .. mf.spritesheet)
     local html = string.format([[
     <div class="sprite" style="
       width:%dpx; height:%dpx;
@@ -115,12 +114,33 @@ local function buildSpriteBody(mf, mood)
     return html, dw
 end
 
+-- GIF-based skins: each mood maps to a self-contained .gif with baked-in
+-- timing. Much simpler than sprite-sheet CSS animation — the artist's frame
+-- delays are honored directly, and adding a new mood is just dropping a file.
+local function buildGifBody(mf, mood)
+    local gifs = mf.gifs or {}
+    local file = gifs[mood] or gifs.input or gifs.idle
+    if not file then return "", 0 end
+    local dw = (mf.display and mf.display.w) or 108
+    local dh = (mf.display and mf.display.h) or 116
+    local url = fileDataUrl(mf.dir .. file)
+    if url == "" then return "", dw end
+    return string.format(
+        '<img class="sprite" style="width:%dpx;height:%dpx" src="%s">',
+        dw, dh, url), dw
+end
+
 local function buildHtml(webDir, text, subtext, mood, skinName)
     local m = MOODS[mood or "input"] or MOODS.input
     local mf = loadSkinManifest(skinName)
     local body, bubbleShift
     if mf then
-        body, bubbleShift = buildSpriteBody(mf, mood or "input")
+        -- Prefer GIF path when manifest lists per-mood .gif files.
+        if mf.gifs then
+            body, bubbleShift = buildGifBody(mf, mood or "input")
+        else
+            body, bubbleShift = buildSpriteBody(mf, mood or "input")
+        end
         bubbleShift = (mf.bubbleOffset or (bubbleShift / 2 + 6))
     else
         body = '<div class="tac">' .. loadSvgRaw(webDir, m.svg) .. '</div>'
