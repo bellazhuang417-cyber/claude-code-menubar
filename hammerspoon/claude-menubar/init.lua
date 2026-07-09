@@ -410,6 +410,69 @@ local function updatePet(list)
     end
 end
 
+-- ---------- Long-running check-in ("still working on it") ----------
+-- When a session has been RUNNING for a while and there's nothing pending,
+-- the pet drops by ONCE with the "review" mood (Musk's thinking pose) to
+-- reassure that Claude is still on it. Silent for short turns, and only
+-- fires once per running turn to avoid spam. Skipped entirely if the skin
+-- doesn't define a "review" gif/animation.
+local REVIEW_LINGER = 12  -- seconds the review pet stays on screen
+local reviewAnnounced = {}  -- "sid:running_since" → true
+
+local function skinHasReview(skinName)
+    if not skinName or skinName == "tac" then return false end
+    local path = os.getenv("HOME") .. "/.claude-menubar/skins/" .. skinName .. "/manifest.json"
+    local f = io.open(path, "r"); if not f then return false end
+    local raw = f:read("*a"); f:close()
+    local ok, mf = pcall(hs_json.decode, raw)
+    if not ok or type(mf) ~= "table" then return false end
+    if mf.gifs and mf.gifs.review then return true end
+    if mf.animations and mf.animations.review then return true end
+    return false
+end
+
+local function announceReview(list, now)
+    if not state.petObj then return end
+    -- Only when the pet isn't already busy (pending has priority).
+    if state.petMode == "pending" then return end
+    local skin = currentSkin()
+    if not skinHasReview(skin) then return end
+    local threshold = tonumber(menubarConfig().long_task_seconds) or 120
+    -- Skip if ANY session is currently pending — pet stays free for that.
+    for _, s in ipairs(list) do
+        if s.effective_state == "pending" then return end
+    end
+    for _, s in ipairs(list) do
+        if s.effective_state == "running" and s.running_since then
+            local elapsed = now - s.running_since
+            if elapsed >= threshold then
+                local key = s.session_id .. ":" .. tostring(s.running_since)
+                if not reviewAnnounced[key] then
+                    reviewAnnounced[key] = true
+                    local dur = formatDur(elapsed)
+                    mlog("review: %s (%s, %s in)", s.session_id, s.project or "?", dur)
+                    local ok, err = pcall(pet.show, state.petObj,
+                        string.format("%s, still on it…", petName()),
+                        (s.title or s.label or s.project or "") .. "  ·  running " .. dur,
+                        "review", skin)
+                    if ok then
+                        state.petMode = "review"
+                        if state.petReviewTimer then state.petReviewTimer:stop() end
+                        state.petReviewTimer = hs.timer.doAfter(REVIEW_LINGER, function()
+                            if state.petObj and state.petObj.visible and state.petMode == "review" then
+                                pet.hide(state.petObj); state.petMode = nil
+                            end
+                        end)
+                    else
+                        mlog("review: show ERROR %s", tostring(err))
+                    end
+                    return  -- one review pet per tick
+                end
+            end
+        end
+    end
+end
+
 -- ---------- Long-task completion announcements ----------
 -- A turn that ran ≥ long_task_seconds and just hit Stop deserves a ping:
 -- macOS notification always (stays in Notification Center if Bella is away),
@@ -486,6 +549,7 @@ local function render()
     notifyPermissions(list)
     updatePet(list)
     announceDone(list)
+    announceReview(list, now)
 
     if state.webviewVisible then
         webview.pushSessions(state.webviewObj, list, top)
