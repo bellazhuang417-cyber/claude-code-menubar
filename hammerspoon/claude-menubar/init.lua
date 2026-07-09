@@ -356,6 +356,198 @@ local function listSkins()
 end
 M.listSkins = listSkins
 
+-- ---------- Self-service skin installer ----------
+-- Handles two zip layouts:
+--   A) codex-pets.net format: pet.json + spritesheet.webp
+--   B) GIF pack: many <slug>-<state>.gif files (no pet.json)
+-- Derives the skin slug from either pet.json.id OR the common GIF prefix,
+-- copies files into ~/.claude-menubar/skins/<slug>/, writes a manifest that
+-- matches the schema pet.lua understands, and refreshes the picker.
+
+local function shellQuote(s) return "'" .. (s or ""):gsub("'", "'\\''") .. "'" end
+
+local function readJsonFile(path)
+    local f = io.open(path, "r"); if not f then return nil end
+    local raw = f:read("*a"); f:close()
+    local ok, d = pcall(hs_json.decode, raw)
+    if ok and type(d) == "table" then return d end
+    return nil
+end
+
+local function writeJsonFile(path, obj)
+    local f = io.open(path, "w"); if not f then return false end
+    f:write(hs_json.encode(obj)); f:close(); return true
+end
+
+local function slugify(s)
+    s = (s or ""):lower():gsub("[^%w%-]", "-"):gsub("%-+", "-"):gsub("^%-+", ""):gsub("%-+$", "")
+    return (s == "") and "skin" or s
+end
+
+local function commonPrefix(names)
+    if #names == 0 then return "" end
+    local first = names[1]
+    for i = #first, 1, -1 do
+        local pfx = first:sub(1, i)
+        local all = true
+        for _, n in ipairs(names) do
+            if n:sub(1, i) ~= pfx then all = false; break end
+        end
+        if all then return pfx end
+    end
+    return ""
+end
+
+function M.installSkinFromZip(zipPath)
+    if not zipPath or not hs.fs.attributes(zipPath) then
+        return false, "zip not found: " .. tostring(zipPath)
+    end
+    -- Unpack to a scratch dir under /tmp
+    local tmp = os.tmpname() .. ".dir"
+    os.remove(tmp); hs.fs.mkdir(tmp)
+    local rc = os.execute("unzip -q -o " .. shellQuote(zipPath) .. " -d " .. shellQuote(tmp))
+    if not rc then
+        return false, "unzip failed"
+    end
+
+    -- Handle nested top-level directory (some zips wrap contents in a folder).
+    local root = tmp
+    do
+        local entries, dirs = {}, {}
+        for e in hs.fs.dir(tmp) do
+            if e ~= "." and e ~= ".." then
+                table.insert(entries, e)
+                local a = hs.fs.attributes(tmp .. "/" .. e)
+                if a and a.mode == "directory" then table.insert(dirs, e) end
+            end
+        end
+        if #entries == 1 and #dirs == 1 then root = tmp .. "/" .. dirs[1] end
+    end
+
+    -- Inventory
+    local files = {}
+    for e in hs.fs.dir(root) do
+        if e ~= "." and e ~= ".." then
+            local a = hs.fs.attributes(root .. "/" .. e)
+            if a and a.mode == "file" then table.insert(files, e) end
+        end
+    end
+
+    local pet = readJsonFile(root .. "/pet.json")  -- codex-pets.net format
+    local gifs = {}
+    local spritesheet = nil
+    for _, f in ipairs(files) do
+        local lower = f:lower()
+        if lower:sub(-4) == ".gif" then table.insert(gifs, f)
+        elseif lower:sub(-5) == ".webp" or lower:sub(-4) == ".png" then
+            if not spritesheet or lower:find("sprite") then spritesheet = f end
+        end
+    end
+
+    -- Decide the slug + displayName
+    local slug, displayName
+    if pet and pet.id then
+        slug, displayName = slugify(pet.id), pet.displayName or pet.id
+    end
+    if not slug and #gifs > 0 then
+        local names = {}
+        -- Lua footgun: string:gsub returns (result, count); passed straight
+        -- to table.insert(t, X) it looks like table.insert(t, pos, value).
+        -- Extract to a single-value local first.
+        for _, g in ipairs(gifs) do
+            local n = (g:gsub("%.gif$", ""))
+            table.insert(names, n)
+        end
+        local pfx = (commonPrefix(names):gsub("%-$", ""))
+        if pfx ~= "" then
+            slug = slugify(pfx)
+            -- Prettify: "sam-altman" → "Sam Altman", "mini-sama" → "Mini Sama"
+            local dn = pfx:gsub("[-_]+", " "):gsub("(%a)(%w*)", function(a, b) return a:upper() .. b:lower() end)
+            displayName = displayName or dn
+        end
+    end
+    if not slug then
+        local base = zipPath:match("([^/]+)%.zip$") or "skin"
+        slug = slugify(base:gsub("%-gifs$", ""))
+        displayName = displayName or slug
+    end
+    displayName = displayName or slug
+
+    -- Assemble a manifest. GIFs win if present (per-state timing baked in);
+    -- otherwise fall back to sprite sheet (needs manual tuning).
+    local manifest = {
+        displayName = displayName,
+        attribution = "Installed via panel",
+        display = { w = 108, h = 116 },
+        bubbleOffset = 44,
+    }
+    if #gifs > 0 then
+        -- Auto-map moods based on filename hints.
+        local function pick(kw) for _, g in ipairs(gifs) do if g:lower():find(kw) then return g end end end
+        local running = pick("running%.gif") or pick("running%-right") or pick("run") or gifs[1]
+        local jumping = pick("jumping") or pick("waving") or pick("jump") or running
+        manifest.gifs = {
+            input = running, done = jumping,
+            idle = pick("idle"), waiting = pick("waiting"),
+            review = pick("review"), failed = pick("failed"),
+        }
+    elseif spritesheet then
+        -- Bare sprite sheet — leave animation ranges empty; user must edit
+        -- manifest.json to define them. We still install to unblock browsing.
+        manifest.spritesheet = spritesheet
+        manifest.frame = { w = 192, h = 208 }
+        manifest.sheet = { w = 1536, h = 1872 }
+        manifest.animations = { input = { row = 0, col = 0, count = 1, duration = 0.9 } }
+    else
+        os.execute("rm -rf " .. shellQuote(tmp))
+        return false, "zip has neither GIFs nor a sprite sheet"
+    end
+
+    -- Move files into ~/.claude-menubar/skins/<slug>/
+    local dst = os.getenv("HOME") .. "/.claude-menubar/skins/" .. slug
+    os.execute("rm -rf " .. shellQuote(dst))
+    hs.fs.mkdir(os.getenv("HOME") .. "/.claude-menubar/skins")
+    hs.fs.mkdir(dst)
+    for _, f in ipairs(files) do
+        if f:lower():sub(-4) == ".gif" or f == spritesheet then
+            os.execute("cp " .. shellQuote(root .. "/" .. f) .. " " .. shellQuote(dst .. "/" .. f))
+        end
+    end
+    writeJsonFile(dst .. "/manifest.json", manifest)
+    os.execute("rm -rf " .. shellQuote(tmp))
+    mlog("installSkin: '%s' → %s (%d gifs)", displayName, slug, #gifs)
+
+    -- Refresh the panel picker if it's open.
+    if state.webviewVisible and state.webviewObj then
+        webview.pushSkins(state.webviewObj, listSkins())
+    end
+    return true, slug
+end
+
+-- Show a native file dialog for picking a .zip, then install it. Called
+-- from the "+" button in the panel footer.
+function M.installSkinPrompt()
+    local defaults = os.getenv("HOME") .. "/Downloads"
+    local picked = nil
+    local ok, result = pcall(function()
+        return hs.dialog.chooseFileOrFolder(
+            "Pick a Codex pet .zip to install",
+            defaults, true, false, false, "zip", false)
+    end)
+    if ok and type(result) == "table" then
+        for _, v in pairs(result) do picked = v; break end
+    end
+    if not picked then return "cancelled" end
+    local success, slugOrErr = M.installSkinFromZip(picked)
+    if success then
+        hs.alert.show("Skin installed: " .. slugOrErr, 2)
+        return "installed=" .. slugOrErr
+    else
+        hs.alert.show("Install failed: " .. tostring(slugOrErr), 3)
+        return "error=" .. tostring(slugOrErr)
+    end
+end
+
 -- Public: hs -c "claudeMenubar.setSkin('winkey')"
 -- Writes ~/.claude-menubar/config.json, invalidates the cache, forces the
 -- next pet appearance to re-render with the new skin.
@@ -989,6 +1181,10 @@ function M.handleAction(action, params)
     elseif action == "set-skin" then
         local name = params.name
         if name then M.setSkin(name) end
+        return true
+    elseif action == "install-skin" then
+        -- Fire the file picker off the main render tick.
+        hs.timer.doAfter(0, function() M.installSkinPrompt() end)
         return true
     elseif action == "decide" then
         -- Allow/Deny clicked in the panel's permission card.
