@@ -323,6 +323,39 @@ local function currentSkin()
     return "tac"
 end
 
+-- Scan ~/.claude-menubar/skins/ for available user skins. Always returns
+-- the built-in "tac" first, followed by any directory with a manifest.json.
+-- Each entry: { name, displayName, active }
+local function listSkins()
+    local out = { { name = "tac", displayName = "Tac", active = false } }
+    local base = os.getenv("HOME") .. "/.claude-menubar/skins"
+    if hs.fs.attributes(base) then
+        for entry in hs.fs.dir(base) do
+            if entry ~= "." and entry ~= ".." then
+                local dir = base .. "/" .. entry
+                local attr = hs.fs.attributes(dir)
+                if attr and attr.mode == "directory" then
+                    local mfPath = dir .. "/manifest.json"
+                    if hs.fs.attributes(mfPath) then
+                        local f = io.open(mfPath, "r")
+                        local raw = f and f:read("*a") or ""
+                        if f then f:close() end
+                        local ok, mf = pcall(hs_json.decode, raw)
+                        local dn = (ok and type(mf) == "table" and mf.displayName) or entry
+                        table.insert(out, { name = entry, displayName = dn, active = false })
+                    end
+                end
+            end
+        end
+    end
+    local cur = currentSkin()
+    for _, s in ipairs(out) do
+        if s.name == cur then s.active = true end
+    end
+    return out
+end
+M.listSkins = listSkins
+
 -- Public: hs -c "claudeMenubar.setSkin('winkey')"
 -- Writes ~/.claude-menubar/config.json, invalidates the cache, forces the
 -- next pet appearance to re-render with the new skin.
@@ -345,6 +378,11 @@ function M.setSkin(name)
         pet.hide(state.petObj); state.petMode = nil
     end
     mlog("skin → %s", name)
+    -- If the panel is open, push a fresh skin list so the picker reflects
+    -- the change immediately.
+    if state.webviewVisible and state.webviewObj then
+        webview.pushSkins(state.webviewObj, listSkins())
+    end
     return "skin=" .. name
 end
 
@@ -553,6 +591,7 @@ local function render()
 
     if state.webviewVisible then
         webview.pushSessions(state.webviewObj, list, top)
+        webview.pushSkins(state.webviewObj, listSkins())
         local h = estimatePanelHeight(#list, state.expandedSid)
         webview.resize(state.webviewObj, h)
     end
@@ -898,6 +937,7 @@ function M.showWebView()
     local frame = state.menubarItem:frame()
     webview.show(state.webviewObj, frame, h)
     webview.pushSessions(state.webviewObj, list, topPriority(list))
+    webview.pushSkins(state.webviewObj, listSkins())
 end
 
 function M.hideWebView()
@@ -945,6 +985,10 @@ function M.handleAction(action, params)
         local list = state.lastList or {}
         local h = estimatePanelHeight(#list, nil)
         webview.resize(state.webviewObj, h)
+        return true
+    elseif action == "set-skin" then
+        local name = params.name
+        if name then M.setSkin(name) end
         return true
     elseif action == "decide" then
         -- Allow/Deny clicked in the panel's permission card.

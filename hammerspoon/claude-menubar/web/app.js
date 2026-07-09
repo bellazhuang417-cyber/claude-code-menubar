@@ -425,6 +425,23 @@ window.renderSessions = function (data) {
   reportHeight();
 };
 
+window.renderSkins = function (data) {
+  const skins = (data && data.skins) || [];
+  const tabs = document.getElementById("sp-tabs");
+  if (!tabs) return;
+  tabs.innerHTML = skins
+    .map(
+      (s) =>
+        `<button class="sp-tab ${
+          s.active ? "active" : ""
+        }" data-skin="${escapeHtml(s.name)}">${escapeHtml(
+          s.displayName || s.name
+        )}</button>`
+    )
+    .join("");
+  reportHeight();
+};
+
 window.renderLog = function (data) {
   if (!data || !data.sid) return;
   state.logs[data.sid] = data.lines || [];
@@ -433,6 +450,19 @@ window.renderLog = function (data) {
 
 // ---------- Event delegation ----------
 document.addEventListener("click", function (e) {
+  // Skin picker tabs
+  const sbtn = e.target.closest("[data-skin]");
+  if (sbtn) {
+    const name = sbtn.getAttribute("data-skin");
+    // Optimistic: mark active immediately
+    document
+      .querySelectorAll(".sp-tab")
+      .forEach((b) => b.classList.toggle("active", b === sbtn));
+    callLua("set-skin", { name: name });
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
   // Permission card Allow / Deny → Lua writes the decision file, the blocked
   // PermissionRequest hook picks it up and answers Claude Code directly.
   const dbtn = e.target.closest("[data-decide]");

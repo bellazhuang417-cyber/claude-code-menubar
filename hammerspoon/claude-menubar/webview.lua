@@ -231,6 +231,16 @@ function M.pushSessions(wv, list, topState)
     wv.view:evaluateJavaScript(js)
 end
 
+-- Push the current list of available skins so the panel can render its
+-- skin picker (bottom of the dropdown). Called on show and after setSkin.
+function M.pushSkins(wv, skins)
+    if not wv or not wv.view then return end
+    local payload = hs.json.encode({ skins = skins })
+    if not payload then return end
+    local js = "window.renderSkins && window.renderSkins(" .. payload .. ");"
+    wv.view:evaluateJavaScript(js)
+end
+
 -- Push expanded log lines for one session.
 function M.pushLog(wv, sid, lines)
     if not wv or not wv.view then return end
