@@ -858,11 +858,13 @@ function M.start()
     state.tickTimer:start()
 
     -- ---------- Drag handle (eventtap) ----------
-    -- Hammerspoon's WKWebView doesn't honor `-webkit-app-region: drag`, so we
-    -- implement window dragging manually. Listen for mousedown in the top
-    -- ~54px of the panel (the .dd-head strip). On drag, move the webview frame.
-    local drag = { active = false, startMouse = nil, startFrame = nil }
-    local HEADER_HEIGHT = 54
+    -- Hammerspoon's WKWebView doesn't honor `-webkit-app-region: drag`, so
+    -- we implement window dragging manually. v0.3.8: the whole panel is
+    -- draggable, not just the header — but a small movement threshold
+    -- distinguishes a click (open session row, click skin tab) from a
+    -- drag (reposition window), so buttons still work normally.
+    local drag = { armed = false, active = false, startMouse = nil, startFrame = nil }
+    local DRAG_THRESHOLD = 5  -- px before we treat mousedown+move as a drag
     state.dragTap = hs.eventtap.new({
         hs.eventtap.event.types.leftMouseDown,
         hs.eventtap.event.types.leftMouseDragged,
@@ -870,31 +872,36 @@ function M.start()
     }, function(event)
         local et = event:getType()
         if et == hs.eventtap.event.types.leftMouseDown then
+            drag.armed, drag.active = false, false
             if not state.webviewVisible or not state.webviewObj or not state.webviewObj.view then
                 return false
             end
             local fr = state.webviewObj.view:frame()
             local mp = hs.mouse.absolutePosition()
-            -- Only start drag if mouse is in header zone.
             if mp.x >= fr.x and mp.x <= fr.x + fr.w
-               and mp.y >= fr.y and mp.y <= fr.y + HEADER_HEIGHT then
-                drag.active = true
+               and mp.y >= fr.y and mp.y <= fr.y + fr.h then
+                drag.armed = true
                 drag.startMouse = mp
                 drag.startFrame = fr
             end
         elseif et == hs.eventtap.event.types.leftMouseDragged then
-            if drag.active and drag.startFrame and state.webviewObj and state.webviewObj.view then
+            if drag.armed and drag.startFrame and state.webviewObj and state.webviewObj.view then
                 local mp = hs.mouse.absolutePosition()
-                local newFr = {
-                    x = drag.startFrame.x + (mp.x - drag.startMouse.x),
-                    y = drag.startFrame.y + (mp.y - drag.startMouse.y),
+                local dx = mp.x - drag.startMouse.x
+                local dy = mp.y - drag.startMouse.y
+                if not drag.active and (dx*dx + dy*dy) < DRAG_THRESHOLD*DRAG_THRESHOLD then
+                    return false  -- still under threshold; let it be a click
+                end
+                drag.active = true
+                state.webviewObj.view:frame({
+                    x = drag.startFrame.x + dx,
+                    y = drag.startFrame.y + dy,
                     w = drag.startFrame.w,
                     h = drag.startFrame.h,
-                }
-                state.webviewObj.view:frame(newFr)
+                })
             end
         elseif et == hs.eventtap.event.types.leftMouseUp then
-            drag.active = false
+            drag.armed, drag.active = false, false
         end
         return false  -- never swallow events; clicks still propagate to the panel
     end)

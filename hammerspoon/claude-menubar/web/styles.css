@@ -451,12 +451,15 @@ body {
 
 .dd-foot {
   border-top: 1px solid var(--line);
-  padding: 8px 14px;
-  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px 10px;
+  display: flex; flex-direction: column; gap: 8px;
   background: rgba(0,0,0,0.18);
   font-family: var(--mono);
   font-size: 10.5px;
   color: var(--fg-mute);
+}
+.dd-foot .dd-foot-row {
+  display: flex; align-items: center; justify-content: space-between;
 }
 .dd-foot .actions { display: flex; gap: 4px; }
 .dd-foot .fbtn {
@@ -472,15 +475,26 @@ body {
 }
 .dd-foot .fbtn:hover { background: rgba(255,255,255,0.05); color: var(--fg); }
 
-/* Skin picker (v0.3.6) — segmented tabs in the footer, one per available skin */
-.dd-foot .skin-picker { display: flex; align-items: center; gap: 6px; }
+/* Skin picker (v0.3.8) — full-width row that wraps when many skins are
+   installed, so nothing gets clipped off to the side. */
+.dd-foot .skin-picker {
+  display: flex; align-items: flex-start; gap: 8px;
+  flex-wrap: wrap;
+}
 .dd-foot .skin-picker .sp-label {
   color: var(--fg-mute);
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  padding-top: 4px;
+  flex-shrink: 0;
 }
-.dd-foot .skin-picker .sp-tabs { display: flex; gap: 3px; }
+.dd-foot .skin-picker .sp-tabs {
+  display: flex; gap: 4px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
 .dd-foot .skin-picker .sp-tab {
   background: transparent;
   border: 1px solid rgba(255,255,255,0.10);
