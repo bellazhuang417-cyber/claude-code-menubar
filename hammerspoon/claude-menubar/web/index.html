@@ -6,7 +6,8 @@
   <title>Claude Code Menubar</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
+<body class="mode-idle">
+  <!-- Panel — visible only in mode-expanded, sits above the pet -->
   <div class="dropdown" id="dropdown">
     <div class="dd-head">
       <div class="h-title">
@@ -33,6 +34,17 @@
       </div>
     </div>
   </div>
+
+  <!-- Pet — always visible, anchors the bottom-right, click toggles expand -->
+  <div class="pet-wrap" id="pet-wrap">
+    <div class="bubble" id="bubble" hidden>
+      <span class="close" id="bubble-close">✕</span>
+      <div class="txt" id="bubble-text"></div>
+      <div class="sub" id="bubble-sub"></div>
+    </div>
+    <div class="pet-body" id="pet-body"></div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

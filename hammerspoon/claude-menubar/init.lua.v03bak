@@ -559,7 +559,7 @@ function M.installSkinFromZip(zipPath)
 
     -- Refresh the panel picker if it's open.
     if state.webviewVisible and state.webviewObj then
-        pet.pushSkins(state.companion, listSkins())
+        webview.pushSkins(state.webviewObj, listSkins())
     end
     return true, slug
 end
@@ -613,7 +613,7 @@ function M.setSkin(name)
     -- If the panel is open, push a fresh skin list so the picker reflects
     -- the change immediately.
     if state.webviewVisible and state.webviewObj then
-        pet.pushSkins(state.companion, listSkins())
+        webview.pushSkins(state.webviewObj, listSkins())
     end
     return "skin=" .. name
 end
@@ -656,13 +656,12 @@ local function updatePet(list)
         return
     end
     local sig = petSignature(list)
-    local skin = currentSkin()
     if sig == "" then
-        -- Nothing pending. Companion window stays visible (v0.4), but drop
-        -- the bubble by pushing an idle-mode pet render.
-        if state.petMode == "pending" then
-            mlog("pet: all clear → idle")
-            pet.pushPet(state.companion, { skin = skin, mood = "idle" })
+        -- Only auto-hide the "needs you" pet here; a "done" celebration is
+        -- managed by its own timer in announceDone.
+        if state.petObj.visible and state.petMode == "pending" then
+            mlog("pet: all clear → hide")
+            pet.hide(state.petObj)
             state.petMode = nil
         end
         state.petShownSig = nil
@@ -672,10 +671,9 @@ local function updatePet(list)
     if sig == state.petShownSig or sig == state.petDismissedSig then return end
     local text, sub = petTextFor(list)
     if text then
+        local skin = currentSkin()
         mlog("pet: show '%s' (%s) skin=%s", text, sub or "", skin)
-        local ok, err = pcall(pet.pushPet, state.companion, {
-            skin = skin, mood = "input", text = text, subtext = sub or "",
-        })
+        local ok, err = pcall(pet.show, state.petObj, text, sub, "input", skin, petPosition())
         if not ok then mlog("pet: show ERROR: %s", tostring(err)) end
         state.petShownSig = sig
         state.petMode = "pending"
@@ -723,18 +721,16 @@ local function announceReview(list, now)
                     reviewAnnounced[key] = true
                     local dur = formatDur(elapsed)
                     mlog("review: %s (%s, %s in)", s.session_id, s.project or "?", dur)
-                    local ok, err = pcall(pet.pushPet, state.companion, {
-                        skin = skin, mood = "review",
-                        text = string.format("%s, still on it…", petName()),
-                        subtext = (s.title or s.label or s.project or "") .. "  ·  running " .. dur,
-                    })
+                    local ok, err = pcall(pet.show, state.petObj,
+                        string.format("%s, still on it…", petName()),
+                        (s.title or s.label or s.project or "") .. "  ·  running " .. dur,
+                        "review", skin, petPosition())
                     if ok then
                         state.petMode = "review"
                         if state.petReviewTimer then state.petReviewTimer:stop() end
                         state.petReviewTimer = hs.timer.doAfter(REVIEW_LINGER, function()
-                            if state.companion and state.petMode == "review" then
-                                pet.pushPet(state.companion, { skin = skin, mood = "idle" })
-                                state.petMode = nil
+                            if state.petObj and state.petObj.visible and state.petMode == "review" then
+                                pet.hide(state.petObj); state.petMode = nil
                             end
                         end)
                     else
@@ -776,23 +772,23 @@ local function announceDone(list)
                         withdrawAfter = 0,
                     }):send()
                 end)
-                local petBusy = state.petMode == "pending"
+                local petBusy = state.petObj.visible and state.petMode == "pending"
                 if not petBusy then
+                    -- Lead with the task name (session title / first user
+                    -- message) so it's obvious WHICH task just finished.
                     local taskName = s.title or s.label or s.project or "session"
-                    local skinNow = currentSkin()
-                    local ok, err = pcall(pet.pushPet, state.companion, {
-                        skin = skinNow, mood = "done",
-                        text = string.format("%s, task finished ✓", petName()),
-                        subtext = taskName .. "  ·  " .. (s.project or "") .. " · ran " .. dur,
-                    })
+                    local ok, err = pcall(pet.show, state.petObj,
+                        string.format("%s, task finished ✓", petName()),
+                        taskName .. "  ·  " .. (s.project or "") .. " · ran " .. dur,
+                        "done", currentSkin(), petPosition())
                     if not ok then
                         mlog("pet: done-show ERROR: %s", tostring(err))
                     else
                         state.petMode = "done"
                         if state.petDoneTimer then state.petDoneTimer:stop() end
                         state.petDoneTimer = hs.timer.doAfter(DONE_PET_LINGER, function()
-                            if state.companion and state.petMode == "done" then
-                                pet.pushPet(state.companion, { skin = skinNow, mood = "idle" })
+                            if state.petObj and state.petObj.visible and state.petMode == "done" then
+                                pet.hide(state.petObj)
                                 state.petMode = nil
                             end
                         end)
@@ -826,10 +822,10 @@ local function render()
     announceReview(list, now)
 
     if state.webviewVisible then
-        pet.pushSessions(state.companion, list, top)
-        pet.pushSkins(state.companion, listSkins())
+        webview.pushSessions(state.webviewObj, list, top)
+        webview.pushSkins(state.webviewObj, listSkins())
         local h = estimatePanelHeight(#list, state.expandedSid)
-        -- [v0.4] webview.resize removed (fixed idle/expanded sizes)
+        webview.resize(state.webviewObj, h)
     end
 end
 
@@ -872,13 +868,6 @@ function M.start()
                               or nil
     pet.show(state.companion, posArg)
     state.webviewVisible = false   -- panel starts collapsed; pet visible
-    -- Push initial idle pet render so the artwork appears right away.
-    hs.timer.doAfter(0.3, function()
-        if state.companion then
-            pet.pushPet(state.companion, { skin = currentSkin(), mood = "idle" })
-            pet.pushSkins(state.companion, listSkins())
-        end
-    end)
 
     -- Note: we used to watch ~/.claude-menubar/ to react to hook writes. But
     -- since the data source is now Claude Desktop's own sessions directory,
@@ -914,36 +903,55 @@ function M.start()
     -- switch, pet body click, × dismiss) from a drag (reposition window).
     -- The pet's saved position is persisted to config.json on mouseup so
     -- next time it appears in the same spot.
-    local drag = { armed = false, active = false, startMouse = nil, startFrame = nil }
+    local drag = {
+        armed = false, active = false, target = nil,  -- "panel" | "pet"
+        startMouse = nil, startFrame = nil,
+    }
     local DRAG_THRESHOLD = 5
 
     local function pointInFrame(mp, fr)
         return mp.x >= fr.x and mp.x <= fr.x + fr.w
            and mp.y >= fr.y and mp.y <= fr.y + fr.h
     end
+    local function targetView()
+        if drag.target == "panel" and state.webviewObj then return state.webviewObj.view end
+        if drag.target == "pet" and state.petObj then return state.petObj.view end
+        return nil
+    end
+
     state.dragTap = hs.eventtap.new({
         hs.eventtap.event.types.leftMouseDown,
         hs.eventtap.event.types.leftMouseDragged,
         hs.eventtap.event.types.leftMouseUp,
     }, function(event)
         local et = event:getType()
-        local view = state.companion and state.companion.view
-        if not view then return false end
         if et == hs.eventtap.event.types.leftMouseDown then
-            drag.armed, drag.active = false, false
+            drag.armed, drag.active, drag.target = false, false, nil
             local mp = hs.mouse.absolutePosition()
-            local fr = view:frame()
-            if pointInFrame(mp, fr) then
-                drag.startFrame, drag.startMouse = fr, mp
-                drag.armed = true
+            -- Prefer the panel if it's visible and hit. Otherwise try pet.
+            if state.webviewVisible and state.webviewObj and state.webviewObj.view then
+                local fr = state.webviewObj.view:frame()
+                if pointInFrame(mp, fr) then
+                    drag.target, drag.startFrame = "panel", fr
+                    drag.startMouse = mp; drag.armed = true
+                end
+            end
+            if not drag.armed and state.petObj and state.petObj.visible and state.petObj.view then
+                local fr = state.petObj.view:frame()
+                if pointInFrame(mp, fr) then
+                    drag.target, drag.startFrame = "pet", fr
+                    drag.startMouse = mp; drag.armed = true
+                end
             end
         elseif et == hs.eventtap.event.types.leftMouseDragged then
             if drag.armed and drag.startFrame then
+                local view = targetView()
+                if not view then return false end
                 local mp = hs.mouse.absolutePosition()
                 local dx = mp.x - drag.startMouse.x
                 local dy = mp.y - drag.startMouse.y
                 if not drag.active and (dx*dx + dy*dy) < DRAG_THRESHOLD*DRAG_THRESHOLD then
-                    return false  -- click, not drag
+                    return false  -- still under threshold; let it be a click
                 end
                 drag.active = true
                 view:frame({
@@ -954,17 +962,14 @@ function M.start()
                 })
             end
         elseif et == hs.eventtap.event.types.leftMouseUp then
-            if drag.active then
-                local fr = view:frame()
-                -- Save the pet's bottom-edge position (independent of
-                -- idle/expanded height) so both modes anchor to the same
-                -- visual spot.
-                savePetPosition(fr.x, fr.y + fr.h - pet.IDLE_HEIGHT)
-                if state.companion then
-                    state.companion.position = { x = fr.x, y_bottom = fr.y + fr.h }
-                end
+            -- On drop: if the PET was dragged (not just clicked), remember
+            -- its new position so it reappears there next time.
+            if drag.target == "pet" and drag.active
+               and state.petObj and state.petObj.view then
+                local fr = state.petObj.view:frame()
+                savePetPosition(fr.x, fr.y)
             end
-            drag.armed, drag.active = false, false
+            drag.armed, drag.active, drag.target = false, false, nil
         end
         return false  -- never swallow events; clicks still propagate
     end)
@@ -1175,7 +1180,7 @@ function M.stop()
     if state.blinkTimer then state.blinkTimer:stop(); state.blinkTimer = nil end
     if state.tickTimer then state.tickTimer:stop(); state.tickTimer = nil end
     if state.petObj then pet.destroy(state.petObj); state.petObj = nil end
-    state.webviewObj = nil  -- v0.4: same window as state.petObj, destroyed above
+    if state.webviewObj then webview.destroy(state.webviewObj); state.webviewObj = nil end
     if state.menubarItem then state.menubarItem:delete(); state.menubarItem = nil end
     state.webviewVisible = false
     print("[claude-menubar] stopped")
@@ -1255,16 +1260,16 @@ function M.handleAction(action, params)
         if not sess then return false end
         state.expandedSid = sid
         local lines = transcript.tail(sess.transcript_path or "", 6)
-        pet.pushLog(state.companion, sid, lines)
+        webview.pushLog(state.webviewObj, sid, lines)
         local list = state.lastList or {}
         local h = estimatePanelHeight(#list, state.expandedSid)
-        -- [v0.4] webview.resize removed (fixed idle/expanded sizes)
+        webview.resize(state.webviewObj, h)
         return true
     elseif action == "collapse" then
         state.expandedSid = nil
         local list = state.lastList or {}
         local h = estimatePanelHeight(#list, nil)
-        -- [v0.4] webview.resize removed (fixed idle/expanded sizes)
+        webview.resize(state.webviewObj, h)
         return true
     elseif action == "set-skin" then
         local name = params.name
@@ -1288,7 +1293,7 @@ function M.handleAction(action, params)
                 s.pending_permission = nil
             end
         end
-        pet.pushSessions(state.companion, state.lastList or {},
+        webview.pushSessions(state.webviewObj, state.lastList or {},
                              topPriority(state.lastList or {}))
         return true
     elseif action == "resize" then
@@ -1297,7 +1302,7 @@ function M.handleAction(action, params)
         local h = tonumber(params.height)
         print(string.format("[resize-action] received height=%s", tostring(params.height)))
         if h and h > 80 and h < 1200 and state.webviewObj and state.webviewObj.view then
-            -- [v0.4] webview.resize removed (fixed idle/expanded sizes)
+            webview.resize(state.webviewObj, h)
         else
             print(string.format("[resize-action] REJECTED — h=%s, wv=%s", tostring(h), tostring(state.webviewObj and "yes" or "no")))
         end

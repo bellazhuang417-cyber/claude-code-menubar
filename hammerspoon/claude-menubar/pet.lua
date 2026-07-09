@@ -1,18 +1,29 @@
--- claude-menubar/pet.lua
--- 桌面宠物：有会话在等确认时，Tac 从屏幕右下角跑出来，气泡喊
--- 「主子，有需求等你确认！」。点宠物 → 打开面板；点 × → 本轮不再打扰；
--- 需求都处理完 → 自动走掉。
+-- claude-menubar/pet.lua  (v0.4 "companion" architecture)
+-- Single always-visible transparent webview that:
+--   1. Hosts the pet artwork in the bottom-right at all times
+--   2. Optionally shows a bubble above the pet for permission requests /
+--      task completion / long-task check-ins
+--   3. Expands UP from the pet position when Bella clicks the pet body or
+--      the menubar cc icon, revealing the full session panel above the pet
+--   4. Collapses back to idle when clicked again
 --
--- 独立的透明无边框 webview，复用 web/assets 里的 Tac SVG（SMIL 动画内联才生效）。
+-- One window replaces the previous split of "pet" + "panel" webviews. The
+-- panel content (sessions / skin picker / status) is HTML-templated in
+-- web/index.html; we load it as-is and control expansion via a CSS class
+-- (body.mode-idle vs body.mode-expanded) plus an animated window frame.
 
 local M = {}
 
--- Pet window size. It's transparent but the ENTIRE rectangle intercepts
--- mouse clicks (hs.webview has no click-through API), so we keep it as
--- tight as possible around the bubble+pet content to minimize the
--- "blocked click zone" when the pet is dragged over other windows.
-local WIDTH, HEIGHT = 300, 200
-local MARGIN = 28   -- gap from screen bottom-right corner
+local IDLE_HEIGHT      = 220   -- window height in idle mode (pet + bubble slot)
+local EXPANDED_HEIGHT  = 760   -- max window height when expanded
+local WIDTH            = 380   -- window width (same in both modes; matches panel)
+local MARGIN           = 22    -- gap from screen bottom-right corner
+-- Content anchored bottom-right → expanded content grows UP. When we resize
+-- the window we adjust y so the bottom edge stays put.
+
+M.WIDTH = WIDTH
+M.IDLE_HEIGHT = IDLE_HEIGHT
+M.EXPANDED_HEIGHT = EXPANDED_HEIGHT
 
 local function readFile(path, binary)
     local f = io.open(path, binary and "rb" or "r")
@@ -21,30 +32,7 @@ local function readFile(path, binary)
     return s
 end
 
-local function loadSvgRaw(webDir, filename)
-    local raw = readFile(webDir .. "assets/" .. filename)
-    if not raw then return "" end
-    raw = raw:gsub("<%?xml.-%?>%s*", "", 1)
-    return raw
-end
-
-local function escapeHtml(s)
-    s = tostring(s or "")
-    return (s:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
-end
-
--- mood: "input" (pink, needs-you) | "done" (green, celebration)
-local MOODS = {
-    input = { svg = "tac-needs-input.svg", accent = "232,76,136" },
-    done  = { svg = "tac-complete.svg",    accent = "74,222,128" },
-}
-
--- ---------- Skin loading ----------
--- A skin lives at ~/.claude-menubar/skins/<name>/ and contains:
---   - manifest.json (frame size, animation ranges per mood)
---   - spritesheet.webp / .png
--- The special skin "tac" is the built-in SVG and doesn't need files.
--- Skins are personal — no third-party asset is shipped with the repo.
+-- ---------- Skin loading (unchanged from v0.3) ----------
 local function loadSkinManifest(name)
     if not name or name == "tac" then return nil end
     local dir = os.getenv("HOME") .. "/.claude-menubar/skins/" .. name .. "/"
@@ -57,8 +45,6 @@ local function loadSkinManifest(name)
     return mf
 end
 
--- Base64-encode a file's bytes. Cached per skin so we don't re-read
--- 2 MB from disk every time the pet reappears.
 local base64Cache = {}
 local function fileDataUrl(path)
     local cached = base64Cache[path]
@@ -67,7 +53,6 @@ local function fileDataUrl(path)
     if not data then return "" end
     local ok, b64 = pcall(hs.base64.encode, data)
     if not ok or not b64 then return "" end
-    -- hs.base64.encode inserts line breaks; strip them for a valid data URL.
     b64 = b64:gsub("%s+", "")
     local mime = "image/webp"
     local low = path:lower()
@@ -79,239 +64,235 @@ local function fileDataUrl(path)
     return url
 end
 
-local function buildSpriteBody(mf, mood)
-    -- CSS sprite-strip animation. We scale the whole spritesheet down so one
-    -- frame fits the requested display size, then animate background-position
-    -- across N adjacent frames on the given row. steps(N) keeps frame edges
-    -- crisp (no interpolation blur).
-    local anim = (mf.animations or {})[mood] or mf.animations.input or {}
-    local fw, fh = mf.frame.w, mf.frame.h
-    local dw, dh = mf.display.w, mf.display.h
-    local sw, sh = mf.sheet.w, mf.sheet.h
-    local scale = dw / fw
-    local scaledW, scaledH = math.floor(sw * scale), math.floor(sh * scale)
-    local col0 = anim.col or 0
-    local row  = anim.row or 0
-    local count = anim.count or 1
-    local duration = anim.duration or 0.9
-    local startX = -col0 * dw
-    local endX   = -(col0 + count) * dw
-    local startY = -row * dh
-    -- Inline the spritesheet as a data URL so WKWebView doesn't need file://
-    -- access. Base64 encode is cached, so this is cheap after the first read.
-    local url = fileDataUrl(mf.dir .. mf.spritesheet)
-    local html = string.format([[
-    <div class="sprite" style="
-      width:%dpx; height:%dpx;
-      background: url('%s') no-repeat;
-      background-size: %dpx %dpx;
-      background-position: %dpx %dpx;
-      animation: sprite-loop %.2fs steps(%d) infinite;
-      image-rendering: -webkit-optimize-contrast;
-    "></div>
-    <style>@keyframes sprite-loop {
-      from { background-position: %dpx %dpx; }
-      to   { background-position: %dpx %dpx; }
-    }</style>]],
-        dw, dh, url, scaledW, scaledH, startX, startY, duration, count,
-        startX, startY, endX, startY)
-    return html, dw
-end
-
--- GIF-based skins: each mood maps to a self-contained .gif with baked-in
--- timing. Much simpler than sprite-sheet CSS animation — the artist's frame
--- delays are honored directly, and adding a new mood is just dropping a file.
-local function buildGifBody(mf, mood)
-    local gifs = mf.gifs or {}
-    local file = gifs[mood] or gifs.input or gifs.idle
-    if not file then return "", 0 end
-    local dw = (mf.display and mf.display.w) or 108
-    local dh = (mf.display and mf.display.h) or 116
-    local url = fileDataUrl(mf.dir .. file)
-    if url == "" then return "", dw end
-    return string.format(
-        '<img class="sprite" style="width:%dpx;height:%dpx" src="%s">',
-        dw, dh, url), dw
-end
-
-local function buildHtml(webDir, text, subtext, mood, skinName)
-    local m = MOODS[mood or "input"] or MOODS.input
-    local mf = loadSkinManifest(skinName)
-    local body, bubbleShift
-    if mf then
-        -- Prefer GIF path when manifest lists per-mood .gif files.
-        if mf.gifs then
-            body, bubbleShift = buildGifBody(mf, mood or "input")
-        else
-            body, bubbleShift = buildSpriteBody(mf, mood or "input")
-        end
-        bubbleShift = (mf.bubbleOffset or (bubbleShift / 2 + 6))
-    else
-        body = '<div class="tac">' .. loadSvgRaw(webDir, m.svg) .. '</div>'
-        bubbleShift = 34
+-- Load built-in Tac SVG artwork keyed by mood. Cached across calls.
+local tacSvgCache = nil
+local function loadTacSvgs(webDir)
+    if tacSvgCache then return tacSvgCache end
+    local dir = webDir .. "assets/"
+    local function svg(name)
+        local raw = readFile(dir .. name); if not raw then return "" end
+        return (raw:gsub("<%?xml.-%?>%s*", "", 1))
     end
-    local html = [[<!doctype html><html><head><meta charset="utf-8"><style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { background: transparent; overflow: hidden; width: 100%; height: 100%; }
-  body { font-family: "PingFang SC", -apple-system, sans-serif; -webkit-user-select: none; }
-
-  .pet-wrap {
-    position: absolute; right: 6px; bottom: 4px;
-    display: flex; flex-direction: column; align-items: flex-end;
-    animation: walk-in 0.65s cubic-bezier(0.22, 1.2, 0.36, 1) both;
-    cursor: pointer;
-  }
-  @keyframes walk-in {
-    0%   { transform: translateX(130%); }
-    70%  { transform: translateX(-6%); }
-    100% { transform: translateX(0); }
-  }
-
-  .bubble {
-    position: relative;
-    max-width: 280px;
-    background: #1b1d22;
-    border: 1px solid rgba(232,76,136,0.45);
-    border-radius: 14px 14px 4px 14px;
-    padding: 10px 30px 10px 14px;
-    margin-right: 34px;
-    box-shadow: 0 6px 22px rgba(0,0,0,0.35), 0 0 14px rgba(232,76,136,0.18);
-    animation: bubble-pop 0.35s 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
-  }
-  @keyframes bubble-pop {
-    from { transform: scale(0.5); opacity: 0; }
-    to   { transform: scale(1); opacity: 1; }
-  }
-  .bubble::after {
-    content: ""; position: absolute; right: -7px; bottom: 10px;
-    width: 12px; height: 12px; background: #1b1d22;
-    border-right: 1px solid rgba(232,76,136,0.45);
-    border-bottom: 1px solid rgba(232,76,136,0.45);
-    transform: rotate(-45deg);
-  }
-  .bubble .txt { color: #f4e9ee; font-size: 13px; font-weight: 600; line-height: 1.4; }
-  .bubble .sub { color: #9a93a5; font-size: 11px; margin-top: 3px; line-height: 1.35;
-                 overflow: hidden; max-width: 240px;
-                 display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-  .bubble .close {
-    position: absolute; top: 5px; right: 7px;
-    color: #6d6878; font-size: 13px; line-height: 1; padding: 3px;
-    cursor: pointer;
-  }
-  .bubble .close:hover { color: #f4e9ee; }
-
-  .tac {
-    width: 84px; height: 84px; margin-top: 6px; margin-right: 8px;
-    filter: drop-shadow(0 5px 10px rgba(0,0,0,0.4));
-    animation: bob 2.2s 0.7s ease-in-out infinite;
-  }
-  @keyframes bob {
-    0%, 100% { transform: translateY(0); }
-    50%      { transform: translateY(-5px); }
-  }
-  .tac svg { width: 100%; height: 100%; }
-
-  /* Sprite-based skins (winkey, muskie, …) */
-  .sprite {
-    margin-top: 6px; margin-right: 8px;
-    filter: drop-shadow(0 5px 10px rgba(0,0,0,0.4));
-  }
-</style></head><body>
-  <div class="pet-wrap" id="pet">
-    <div class="bubble" style="margin-right:__BUBBLE_SHIFT__px">
-      <span class="close" id="pet-close">✕</span>
-      <div class="txt">]] .. escapeHtml(text) .. [[</div>
-      ]] .. (subtext and subtext ~= "" and ('<div class="sub">' .. escapeHtml(subtext) .. '</div>') or "") .. [[
-    </div>
-    ]] .. body .. [[
-  </div><!-- accent swapped per mood below -->
-  <script>
-    function send(action) {
-      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.claudePet) {
-        window.webkit.messageHandlers.claudePet.postMessage({ action: action });
-      }
+    tacSvgCache = {
+        idle   = svg("tac.svg"),
+        input  = svg("tac-needs-input.svg"),
+        done   = svg("tac-complete.svg"),
+        review = svg("tac-working.svg"),
     }
-    document.getElementById("pet-close").addEventListener("click", function (e) {
-      e.stopPropagation();
-      send("pet-dismiss");
-    });
-    document.getElementById("pet").addEventListener("click", function () {
-      send("pet-click");
-    });
-  </script>
-</body></html>]]
-    -- The template's accent literals are the pink "input" values; swap the
-    -- rgb triplet for the mood's accent (green for "done").
-    if m.accent ~= MOODS.input.accent then
-        html = html:gsub("232,76,136", m.accent)
-    end
-    html = html:gsub("__BUBBLE_SHIFT__", tostring(math.floor(bubbleShift)))
-    return html
+    return tacSvgCache
 end
 
--- create(opts) -> pet object
---   opts.webDir    : path to web/ (for assets)
---   opts.onClick   : called when the pet body is clicked
---   opts.onDismiss : called when the × is clicked
+-- Build the pet body markup + a "data URL for skin's GIF" map so the JS
+-- side can swap sprites in-place without a full HTML reload.
+-- Returns: bodyHtml (initial pet HTML), skinData (table for JS)
+local function skinRenderData(mf, mood, webDir)
+    local dw = (mf and mf.display and mf.display.w) or 108
+    local dh = (mf and mf.display and mf.display.h) or 116
+    if mf and mf.gifs then
+        -- GIF-per-mood skin: precompute data URLs for every mood so JS can
+        -- swap by changing <img src> without contacting Lua again.
+        local urls = {}
+        for k, file in pairs(mf.gifs) do
+            urls[k] = fileDataUrl(mf.dir .. file)
+        end
+        return { kind = "gif", w = dw, h = dh, urls = urls }
+    elseif mf and mf.spritesheet then
+        -- Sprite sheet: emit inline styles per mood (JS applies them)
+        local sheetUrl = fileDataUrl(mf.dir .. mf.spritesheet)
+        local sw = (mf.sheet and mf.sheet.w) or 1536
+        local sh = (mf.sheet and mf.sheet.h) or 1872
+        local fw = (mf.frame and mf.frame.w) or 192
+        local fh = (mf.frame and mf.frame.h) or 208
+        local scale = dw / fw
+        local styles = {}
+        for k, a in pairs(mf.animations or {}) do
+            local col0 = a.col or 0
+            local row  = a.row or 0
+            local count = a.count or 1
+            local dur = a.duration or 0.9
+            styles[k] = {
+                url = sheetUrl,
+                sheetW = math.floor(sw * scale), sheetH = math.floor(sh * scale),
+                startX = -col0 * dw, endX = -(col0 + count) * dw,
+                startY = -row * dh,
+                count = count, duration = dur,
+            }
+        end
+        return { kind = "sprite", w = dw, h = dh, sprites = styles }
+    end
+    -- Built-in Tac: send raw SVG markup per mood, JS injects it.
+    return { kind = "tac", w = 84, h = 84, svgs = loadTacSvgs(webDir or "") }
+end
+
+-- ---------- Public API ----------
+
+-- create(opts) -> companion object
+--   opts.webDir      : absolute path to web/
+--   opts.onPetClick  : called when the pet body is clicked (toggle expand)
+--   opts.onBubbleDismiss : called when the × on the bubble is clicked
+--   opts.onAction    : called for every panel action {action, params}
 function M.create(opts)
-    local pet = { opts = opts, visible = false }
-    local controller = hs.webview.usercontent.new("claudePet")
+    local companion = {
+        opts = opts,
+        visible = false,
+        expanded = false,
+    }
+
+    local bridgeLog = os.getenv("HOME") .. "/.claude-menubar/menubar.log"
+    local function blog(s)
+        local f = io.open(bridgeLog, "a")
+        if f then f:write(string.format("[%s] bridge: %s\n", os.date("%H:%M:%S"), s)); f:close() end
+    end
+
+    local controller = hs.webview.usercontent.new("claudeMenubar")
     controller:setCallback(function(message)
         local body = message and message.body
         if type(body) ~= "table" then return end
-        if body.action == "pet-click" and opts.onClick then
-            pcall(opts.onClick)
-        elseif body.action == "pet-dismiss" and opts.onDismiss then
-            pcall(opts.onDismiss)
+        local action = body.action
+        if action ~= "resize" then blog("recv action=" .. tostring(action)) end
+        if action == "toggle-expand" and opts.onPetClick then
+            pcall(opts.onPetClick)
+        elseif action == "bubble-dismiss" and opts.onBubbleDismiss then
+            pcall(opts.onBubbleDismiss)
+        elseif opts.onAction then
+            pcall(opts.onAction, action, body.params or {})
         end
     end)
-    local view = hs.webview.new(hs.geometry.rect(0, 0, WIDTH, HEIGHT), {}, controller)
+    companion.controller = controller
+
+    -- Load HTML from web/index.html (self-contained template with all styles
+    -- and JS inlined). This lets us edit the panel visually without touching
+    -- Lua strings.
+    local html = readFile(opts.webDir .. "index.html")
+    if not html then
+        error("companion: web/index.html not found under " .. opts.webDir)
+    end
+    -- Inline the CSS and JS so no file:// requests are needed. The template
+    -- already references them relatively, so we substitute inline.
+    local css = readFile(opts.webDir .. "styles.css") or ""
+    local js  = readFile(opts.webDir .. "app.js")    or ""
+    html = html:gsub('<link rel="stylesheet" href="styles.css"[^>]*>', function()
+        return "<style>" .. css .. "</style>"
+    end)
+    html = html:gsub('<script src="app.js"[^>]*></script>', function()
+        return "<script>" .. js .. "</script>"
+    end)
+    companion.html = html
+
+    local view = hs.webview.new(hs.geometry.rect(0, 0, WIDTH, IDLE_HEIGHT), {
+        developerExtrasEnabled = true,
+    }, controller)
         :allowTextEntry(false)
         :transparent(true)
         :windowStyle({ "borderless", "nonactivating" })
         :level(hs.drawing.windowLevels.floating)
         :shadow(false)
-    pet.view = view
-    pet.controller = controller
-    return pet
+        :html(html)
+    companion.view = view
+    return companion
 end
 
--- show(pet, text, subtext, mood, skinName) — (re)loads the HTML so the
--- walk-in animation replays, positions bottom-right of the main screen,
--- and shows the window. mood: "input" (default, pink) | "done" (green).
--- skinName: nil/"tac" → built-in SVG; anything else → ~/.claude-menubar/
--- skins/<name>/ manifest.
-function M.show(pet, text, subtext, mood, skinName, position)
-    if not pet or not pet.view then return end
-    local html = buildHtml(pet.opts.webDir, text or "A request needs your approval!", subtext, mood, skinName)
-    pet.view:html(html)
-    -- If Bella dragged the pet somewhere, honor that position; otherwise
-    -- fall back to the default bottom-right corner of the main screen.
+-- Compute the frame for a given mode and pet position. Pet's bottom-right
+-- is the anchor; the window grows upward when expanded.
+local function frameFor(mode, position)
+    local screen = hs.screen.mainScreen():frame()
+    local h = (mode == "expanded") and EXPANDED_HEIGHT or IDLE_HEIGHT
     local x, y
-    if position and type(position.x) == "number" and type(position.y) == "number" then
-        x, y = position.x, position.y
+    if position and type(position.x) == "number" and type(position.y_bottom) == "number" then
+        -- position.y_bottom is where the bottom of the (idle) window sits
+        x = position.x
+        y = position.y_bottom - h
     else
-        local frame = hs.screen.mainScreen():frame()  -- excludes menubar
-        x = frame.x + frame.w - WIDTH - MARGIN
-        y = frame.y + frame.h - HEIGHT - MARGIN
+        x = screen.x + screen.w - WIDTH - MARGIN
+        y = screen.y + screen.h - h - MARGIN
     end
-    pet.view:frame({ x = x, y = y, w = WIDTH, h = HEIGHT })
-    pet.view:show()
-    pet.visible = true
+    return { x = x, y = y, w = WIDTH, h = h }
 end
 
-function M.hide(pet)
-    if not pet or not pet.view then return end
-    pet.view:hide()
-    pet.visible = false
+-- position argument: { x = ..., y_bottom = ... } (bottom edge anchor).
+-- Pass nil to use the default bottom-right corner of the main screen.
+function M.show(companion, position)
+    if not companion or not companion.view then return end
+    companion.position = position
+    local mode = companion.expanded and "expanded" or "idle"
+    companion.view:frame(frameFor(mode, position))
+    companion.view:show()
+    companion.visible = true
 end
 
-function M.destroy(pet)
-    if pet and pet.view then
-        pet.view:delete()
-        pet.view = nil
+function M.hide(companion)
+    if not companion or not companion.view then return end
+    companion.view:hide()
+    companion.visible = false
+end
+
+function M.destroy(companion)
+    if companion and companion.view then
+        companion.view:delete()
+        companion.view = nil
     end
-    if pet then pet.visible = false end
+    if companion then
+        companion.visible = false
+        companion.expanded = false
+    end
+end
+
+-- Expand / collapse the panel with the pet anchored at the bottom.
+function M.setExpanded(companion, expanded)
+    if not companion or not companion.view then return end
+    if companion.expanded == expanded then return end
+    companion.expanded = expanded
+    companion.view:frame(frameFor(expanded and "expanded" or "idle", companion.position))
+    -- Tell JS to swap the mode class so panel visibility toggles.
+    companion.view:evaluateJavaScript(
+        "document.body.classList.toggle('mode-expanded', " .. tostring(expanded) .. ");" ..
+        "document.body.classList.toggle('mode-idle', " .. tostring(not expanded) .. ");"
+    )
+end
+
+-- ---------- Data push helpers (Lua -> JS) ----------
+
+function M.pushSessions(companion, sessions, top)
+    if not companion or not companion.view then return end
+    local payload = hs.json.encode({ sessions = sessions, top = top, now = os.time() })
+    if not payload then return end
+    companion.view:evaluateJavaScript(
+        "window.renderSessions && window.renderSessions(" .. payload .. ");")
+end
+
+function M.pushSkins(companion, skins)
+    if not companion or not companion.view then return end
+    local payload = hs.json.encode({ skins = skins })
+    if not payload then return end
+    companion.view:evaluateJavaScript(
+        "window.renderSkins && window.renderSkins(" .. payload .. ");")
+end
+
+function M.pushLog(companion, sid, lines)
+    if not companion or not companion.view then return end
+    local payload = hs.json.encode({ sid = sid, lines = lines })
+    if not payload then return end
+    companion.view:evaluateJavaScript(
+        "window.renderLog && window.renderLog(" .. payload .. ");")
+end
+
+-- Push the current pet mood + text. mood is "idle" | "input" | "done" |
+-- "review" | nil. When mood is nil or "idle", the bubble is hidden.
+--   { skin, skinName, mood, text, subtext }
+function M.pushPet(companion, args)
+    if not companion or not companion.view then return end
+    local mf = loadSkinManifest(args.skin)
+    local skinData = skinRenderData(mf, args.mood or "idle", companion.opts and companion.opts.webDir)
+    local payload = hs.json.encode({
+        skinName = args.skin or "tac",
+        skinData = skinData,
+        mood = args.mood or "idle",
+        text = args.text or "",
+        subtext = args.subtext or "",
+    })
+    if not payload then return end
+    companion.view:evaluateJavaScript(
+        "window.renderPet && window.renderPet(" .. payload .. ");")
 end
 
 return M

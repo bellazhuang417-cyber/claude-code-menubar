@@ -442,6 +442,83 @@ window.renderSkins = function (data) {
   reportHeight();
 };
 
+// v0.4: render pet body + bubble. Called by Lua M.pushPet.
+//   data = { skinName, skinData, mood, text, subtext }
+window.renderPet = function (data) {
+  if (!data) return;
+  const petBody = document.getElementById("pet-body");
+  const bubble = document.getElementById("bubble");
+  const bubbleText = document.getElementById("bubble-text");
+  const bubbleSub = document.getElementById("bubble-sub");
+  if (!petBody || !bubble) return;
+
+  // Bubble text/state
+  const mood = data.mood || "idle";
+  const hasBubble = !!(data.text && mood !== "idle");
+  if (hasBubble) {
+    bubbleText.textContent = data.text;
+    bubbleSub.textContent = data.subtext || "";
+    bubbleSub.style.display = data.subtext ? "" : "none";
+    bubble.setAttribute("data-mood", mood);
+    bubble.hidden = false;
+  } else {
+    bubble.hidden = true;
+  }
+
+  // Pet body rendering — only rebuild markup if skin OR mood changed
+  const sig = (data.skinName || "tac") + ":" + mood;
+  if (petBody.getAttribute("data-sig") === sig) return;
+  petBody.setAttribute("data-sig", sig);
+
+  const s = data.skinData || {};
+  petBody.innerHTML = "";
+  if (s.kind === "gif") {
+    const url = (s.urls && (s.urls[mood] || s.urls.input || s.urls.idle)) || "";
+    if (url) {
+      const img = document.createElement("img");
+      img.className = "sprite";
+      img.style.width = s.w + "px";
+      img.style.height = s.h + "px";
+      img.src = url;
+      petBody.appendChild(img);
+    }
+  } else if (s.kind === "sprite") {
+    const anim = (s.sprites && (s.sprites[mood] || s.sprites.input)) || null;
+    if (anim) {
+      const div = document.createElement("div");
+      div.className = "sprite";
+      div.style.width = s.w + "px";
+      div.style.height = s.h + "px";
+      div.style.background = "url('" + anim.url + "') no-repeat";
+      div.style.backgroundSize = anim.sheetW + "px " + anim.sheetH + "px";
+      div.style.backgroundPosition = anim.startX + "px " + anim.startY + "px";
+      div.style.animation =
+        "sprite-loop-" + mood + " " + anim.duration + "s steps(" + anim.count + ") infinite";
+      // Inject the @keyframes for this mood
+      const styleId = "sprite-kf-" + mood;
+      let styleEl = document.getElementById(styleId);
+      if (!styleEl) {
+        styleEl = document.createElement("style");
+        styleEl.id = styleId;
+        document.head.appendChild(styleEl);
+      }
+      styleEl.textContent =
+        "@keyframes sprite-loop-" + mood + " { from { background-position: " +
+        anim.startX + "px " + anim.startY + "px; } to { background-position: " +
+        anim.endX + "px " + anim.startY + "px; } }";
+      petBody.appendChild(div);
+    }
+  } else {
+    // Tac SVG fallback
+    const svgs = s.svgs || {};
+    const svg = svgs[mood] || svgs.idle || svgs.input || "";
+    const wrap = document.createElement("div");
+    wrap.className = "tac";
+    wrap.innerHTML = svg;
+    petBody.appendChild(wrap);
+  }
+};
+
 window.renderLog = function (data) {
   if (!data || !data.sid) return;
   state.logs[data.sid] = data.lines || [];
@@ -450,6 +527,24 @@ window.renderLog = function (data) {
 
 // ---------- Event delegation ----------
 document.addEventListener("click", function (e) {
+  // v0.4: bubble close (× on the pet's bubble)
+  const bClose = e.target.closest("#bubble-close");
+  if (bClose) {
+    const bubble = document.getElementById("bubble");
+    if (bubble) bubble.hidden = true;
+    callLua("bubble-dismiss", {});
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
+  // v0.4: click on pet body → toggle expand/collapse
+  const petBody = e.target.closest("#pet-body");
+  if (petBody) {
+    callLua("toggle-expand", {});
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
   // Skin picker tabs
   const sbtn = e.target.closest("[data-skin]");
   if (sbtn) {
