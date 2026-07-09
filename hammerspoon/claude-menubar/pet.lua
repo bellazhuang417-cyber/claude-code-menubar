@@ -7,7 +7,11 @@
 
 local M = {}
 
-local WIDTH, HEIGHT = 340, 220
+-- Pet window size. It's transparent but the ENTIRE rectangle intercepts
+-- mouse clicks (hs.webview has no click-through API), so we keep it as
+-- tight as possible around the bubble+pet content to minimize the
+-- "blocked click zone" when the pet is dragged over other windows.
+local WIDTH, HEIGHT = 300, 200
 local MARGIN = 28   -- gap from screen bottom-right corner
 
 local function readFile(path, binary)

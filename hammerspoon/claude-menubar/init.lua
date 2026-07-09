@@ -1120,6 +1120,35 @@ function M.backfillFromDesktopSessions(maxAgeSeconds)
     return #toAdd
 end
 
+function M.petProbe(methodName)
+    if not state.petObj or not state.petObj.view then return "no pet" end
+    return "method=" .. tostring(methodName) .. " type=" .. type(state.petObj.view[methodName])
+end
+
+function M.listPetMethods(pattern)
+    if not state.petObj or not state.petObj.view then return "no pet" end
+    local mt = getmetatable(state.petObj.view)
+    local out = {}
+    for k, _ in pairs(mt) do
+        if not pattern or k:find(pattern) then table.insert(out, k) end
+    end
+    table.sort(out)
+    return table.concat(out, ", ")
+end
+
+function M.listPetWindowMethods(pattern)
+    if not state.petObj or not state.petObj.view then return "no pet" end
+    local w = state.petObj.view:hswindow()
+    if not w then return "no hs.window" end
+    local mt = getmetatable(w)
+    local out = {}
+    for k, _ in pairs(mt) do
+        if not pattern or k:find(pattern) then table.insert(out, k) end
+    end
+    table.sort(out)
+    return table.concat(out, ", ")
+end
+
 -- Debug helper: inspect the pet object from `hs -c`.
 function M.petDebug()
     if not state.petObj then return "petObj=NIL" end
