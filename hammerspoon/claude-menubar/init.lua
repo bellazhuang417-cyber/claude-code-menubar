@@ -323,6 +323,46 @@ local function currentSkin()
     return "tac"
 end
 
+-- Persisted pet window position (from Bella dragging the pet). Nil if she
+-- never dragged it — pet.lua then falls back to the bottom-right default.
+local function petPosition()
+    local cfg = menubarConfig()
+    if type(cfg.pet_x) == "number" and type(cfg.pet_y) == "number" then
+        return { x = cfg.pet_x, y = cfg.pet_y }
+    end
+    return nil
+end
+
+local function savePetPosition(x, y)
+    local path = os.getenv("HOME") .. "/.claude-menubar/config.json"
+    local raw = ""
+    local f = io.open(path, "r"); if f then raw = f:read("*a"); f:close() end
+    local ok, cfg = pcall(hs_json.decode, raw)
+    if not ok or type(cfg) ~= "table" then cfg = {} end
+    cfg.pet_x = math.floor(x)
+    cfg.pet_y = math.floor(y)
+    local out = io.open(path, "w")
+    if out then out:write(hs_json.encode(cfg)); out:close() end
+    configCache = nil
+    mlog("pet position saved: (%d, %d)", x, y)
+end
+
+-- Public: hs -c "claudeMenubar.resetPetPosition()"
+-- Wipes the saved x/y so the pet snaps back to the default corner.
+function M.resetPetPosition()
+    local path = os.getenv("HOME") .. "/.claude-menubar/config.json"
+    local raw = ""
+    local f = io.open(path, "r"); if f then raw = f:read("*a"); f:close() end
+    local ok, cfg = pcall(hs_json.decode, raw)
+    if not ok or type(cfg) ~= "table" then cfg = {} end
+    cfg.pet_x, cfg.pet_y = nil, nil
+    local out = io.open(path, "w")
+    if out then out:write(hs_json.encode(cfg)); out:close() end
+    configCache = nil
+    mlog("pet position reset to default")
+    return "pet position reset"
+end
+
 -- Scan ~/.claude-menubar/skins/ for available user skins. Always returns
 -- the built-in "tac" first, followed by any directory with a manifest.json.
 -- Each entry: { name, displayName, active }
@@ -633,7 +673,7 @@ local function updatePet(list)
     if text then
         local skin = currentSkin()
         mlog("pet: show '%s' (%s) skin=%s", text, sub or "", skin)
-        local ok, err = pcall(pet.show, state.petObj, text, sub, "input", skin)
+        local ok, err = pcall(pet.show, state.petObj, text, sub, "input", skin, petPosition())
         if not ok then mlog("pet: show ERROR: %s", tostring(err)) end
         state.petShownSig = sig
         state.petMode = "pending"
@@ -684,7 +724,7 @@ local function announceReview(list, now)
                     local ok, err = pcall(pet.show, state.petObj,
                         string.format("%s, still on it…", petName()),
                         (s.title or s.label or s.project or "") .. "  ·  running " .. dur,
-                        "review", skin)
+                        "review", skin, petPosition())
                     if ok then
                         state.petMode = "review"
                         if state.petReviewTimer then state.petReviewTimer:stop() end
@@ -740,7 +780,7 @@ local function announceDone(list)
                     local ok, err = pcall(pet.show, state.petObj,
                         string.format("%s, task finished ✓", petName()),
                         taskName .. "  ·  " .. (s.project or "") .. " · ran " .. dur,
-                        "done", currentSkin())
+                        "done", currentSkin(), petPosition())
                     if not ok then
                         mlog("pet: done-show ERROR: %s", tostring(err))
                     else
@@ -859,12 +899,27 @@ function M.start()
 
     -- ---------- Drag handle (eventtap) ----------
     -- Hammerspoon's WKWebView doesn't honor `-webkit-app-region: drag`, so
-    -- we implement window dragging manually. v0.3.8: the whole panel is
-    -- draggable, not just the header — but a small movement threshold
-    -- distinguishes a click (open session row, click skin tab) from a
-    -- drag (reposition window), so buttons still work normally.
-    local drag = { armed = false, active = false, startMouse = nil, startFrame = nil }
-    local DRAG_THRESHOLD = 5  -- px before we treat mousedown+move as a drag
+    -- we implement window dragging manually for both the panel AND the pet.
+    -- A 5px movement threshold distinguishes a click (row expand, skin
+    -- switch, pet body click, × dismiss) from a drag (reposition window).
+    -- The pet's saved position is persisted to config.json on mouseup so
+    -- next time it appears in the same spot.
+    local drag = {
+        armed = false, active = false, target = nil,  -- "panel" | "pet"
+        startMouse = nil, startFrame = nil,
+    }
+    local DRAG_THRESHOLD = 5
+
+    local function pointInFrame(mp, fr)
+        return mp.x >= fr.x and mp.x <= fr.x + fr.w
+           and mp.y >= fr.y and mp.y <= fr.y + fr.h
+    end
+    local function targetView()
+        if drag.target == "panel" and state.webviewObj then return state.webviewObj.view end
+        if drag.target == "pet" and state.petObj then return state.petObj.view end
+        return nil
+    end
+
     state.dragTap = hs.eventtap.new({
         hs.eventtap.event.types.leftMouseDown,
         hs.eventtap.event.types.leftMouseDragged,
@@ -872,20 +927,27 @@ function M.start()
     }, function(event)
         local et = event:getType()
         if et == hs.eventtap.event.types.leftMouseDown then
-            drag.armed, drag.active = false, false
-            if not state.webviewVisible or not state.webviewObj or not state.webviewObj.view then
-                return false
-            end
-            local fr = state.webviewObj.view:frame()
+            drag.armed, drag.active, drag.target = false, false, nil
             local mp = hs.mouse.absolutePosition()
-            if mp.x >= fr.x and mp.x <= fr.x + fr.w
-               and mp.y >= fr.y and mp.y <= fr.y + fr.h then
-                drag.armed = true
-                drag.startMouse = mp
-                drag.startFrame = fr
+            -- Prefer the panel if it's visible and hit. Otherwise try pet.
+            if state.webviewVisible and state.webviewObj and state.webviewObj.view then
+                local fr = state.webviewObj.view:frame()
+                if pointInFrame(mp, fr) then
+                    drag.target, drag.startFrame = "panel", fr
+                    drag.startMouse = mp; drag.armed = true
+                end
+            end
+            if not drag.armed and state.petObj and state.petObj.visible and state.petObj.view then
+                local fr = state.petObj.view:frame()
+                if pointInFrame(mp, fr) then
+                    drag.target, drag.startFrame = "pet", fr
+                    drag.startMouse = mp; drag.armed = true
+                end
             end
         elseif et == hs.eventtap.event.types.leftMouseDragged then
-            if drag.armed and drag.startFrame and state.webviewObj and state.webviewObj.view then
+            if drag.armed and drag.startFrame then
+                local view = targetView()
+                if not view then return false end
                 local mp = hs.mouse.absolutePosition()
                 local dx = mp.x - drag.startMouse.x
                 local dy = mp.y - drag.startMouse.y
@@ -893,7 +955,7 @@ function M.start()
                     return false  -- still under threshold; let it be a click
                 end
                 drag.active = true
-                state.webviewObj.view:frame({
+                view:frame({
                     x = drag.startFrame.x + dx,
                     y = drag.startFrame.y + dy,
                     w = drag.startFrame.w,
@@ -901,9 +963,16 @@ function M.start()
                 })
             end
         elseif et == hs.eventtap.event.types.leftMouseUp then
-            drag.armed, drag.active = false, false
+            -- On drop: if the PET was dragged (not just clicked), remember
+            -- its new position so it reappears there next time.
+            if drag.target == "pet" and drag.active
+               and state.petObj and state.petObj.view then
+                local fr = state.petObj.view:frame()
+                savePetPosition(fr.x, fr.y)
+            end
+            drag.armed, drag.active, drag.target = false, false, nil
         end
-        return false  -- never swallow events; clicks still propagate to the panel
+        return false  -- never swallow events; clicks still propagate
     end)
     state.dragTap:start()
 

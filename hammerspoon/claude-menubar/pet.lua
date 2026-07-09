@@ -7,7 +7,7 @@
 
 local M = {}
 
-local WIDTH, HEIGHT = 300, 200
+local WIDTH, HEIGHT = 340, 220
 local MARGIN = 28   -- gap from screen bottom-right corner
 
 local function readFile(path, binary)
@@ -165,7 +165,7 @@ local function buildHtml(webDir, text, subtext, mood, skinName)
 
   .bubble {
     position: relative;
-    max-width: 240px;
+    max-width: 280px;
     background: #1b1d22;
     border: 1px solid rgba(232,76,136,0.45);
     border-radius: 14px 14px 4px 14px;
@@ -187,7 +187,7 @@ local function buildHtml(webDir, text, subtext, mood, skinName)
   }
   .bubble .txt { color: #f4e9ee; font-size: 13px; font-weight: 600; line-height: 1.4; }
   .bubble .sub { color: #9a93a5; font-size: 11px; margin-top: 3px; line-height: 1.35;
-                 overflow: hidden; max-width: 200px;
+                 overflow: hidden; max-width: 240px;
                  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .bubble .close {
     position: absolute; top: 5px; right: 7px;
@@ -277,17 +277,21 @@ end
 -- and shows the window. mood: "input" (default, pink) | "done" (green).
 -- skinName: nil/"tac" → built-in SVG; anything else → ~/.claude-menubar/
 -- skins/<name>/ manifest.
-function M.show(pet, text, subtext, mood, skinName)
+function M.show(pet, text, subtext, mood, skinName, position)
     if not pet or not pet.view then return end
     local html = buildHtml(pet.opts.webDir, text or "A request needs your approval!", subtext, mood, skinName)
     pet.view:html(html)
-    local frame = hs.screen.mainScreen():frame()  -- excludes menubar; includes dock side
-    pet.view:frame({
-        x = frame.x + frame.w - WIDTH - MARGIN,
-        y = frame.y + frame.h - HEIGHT - MARGIN,
-        w = WIDTH,
-        h = HEIGHT,
-    })
+    -- If Bella dragged the pet somewhere, honor that position; otherwise
+    -- fall back to the default bottom-right corner of the main screen.
+    local x, y
+    if position and type(position.x) == "number" and type(position.y) == "number" then
+        x, y = position.x, position.y
+    else
+        local frame = hs.screen.mainScreen():frame()  -- excludes menubar
+        x = frame.x + frame.w - WIDTH - MARGIN
+        y = frame.y + frame.h - HEIGHT - MARGIN
+    end
+    pet.view:frame({ x = x, y = y, w = WIDTH, h = HEIGHT })
     pet.view:show()
     pet.visible = true
 end
