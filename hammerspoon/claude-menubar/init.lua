@@ -609,18 +609,16 @@ function M.setSkin(name)
     local out = io.open(path, "w")
     if out then out:write(hs_json.encode(cfg)); out:close() end
     configCache = nil
-    -- Force the pet to re-appear on the next tick with the new skin.
+    -- v0.4: companion window stays visible; just refresh the pet artwork
+    -- with the new skin. (v0.3 used to hide the whole window here — that
+    -- caused the pet to disappear in idle mode after switching skins.)
     state.petShownSig = nil
     state.petDismissedSig = nil
-    if state.petObj and state.petObj.visible then
-        pet.hide(state.petObj); state.petMode = nil
-    end
-    mlog("skin → %s", name)
-    -- If the panel is open, push a fresh skin list so the picker reflects
-    -- the change immediately.
-    if state.webviewVisible and state.webviewObj then
+    if state.companion then
+        pet.pushPet(state.companion, { skin = name, mood = state.petMode or "idle" })
         pet.pushSkins(state.companion, listSkins())
     end
+    mlog("skin → %s", name)
     return "skin=" .. name
 end
 
@@ -826,6 +824,12 @@ local function render()
     local top = topPriority(list)
 
     menubar.update(state.menubarItem, top, #list, state.blinkPhase)
+    -- v0.4 safety net: the companion should always be visible. If some
+    -- accidental hide slipped through, bring it back on the next tick.
+    if state.companion and state.companion.view and not state.companion.view:isVisible() then
+        mlog("companion re-show (was hidden)")
+        pet.show(state.companion, state.companion.position)
+    end
     notifyPermissions(list)
     updatePet(list)
     announceDone(list)
@@ -1150,6 +1154,12 @@ function M.listPetWindowMethods(pattern)
 end
 
 -- Debug helper: inspect the pet object from `hs -c`.
+function M.forcePetMood(mood)
+    if not state.companion then return "no companion" end
+    pet.pushPet(state.companion, { skin = currentSkin(), mood = mood or "idle" })
+    return "pushed " .. tostring(mood or "idle")
+end
+
 function M.petFrame()
     if not state.companion or not state.companion.view then return nil end
     local f = state.companion.view:frame()
