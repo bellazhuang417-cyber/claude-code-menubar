@@ -649,6 +649,29 @@ body.mode-expanded .dropdown {
 }
 .pet-body img.sprite { display: block; }
 
+/* Panel close button — sits top-right of the panel header, collapses the
+   companion back to idle (pet only). Same action as clicking the pet
+   body or the menubar cc icon, but discoverable. */
+.dd-head { position: relative; }
+.dd-head .panel-close {
+  position: absolute;
+  top: 10px; right: 12px;
+  width: 22px; height: 22px;
+  padding: 0;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 50%;
+  color: var(--fg-mute);
+  font-size: 11px; line-height: 1;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.dd-head .panel-close:hover {
+  background: rgba(232,76,136,0.14);
+  border-color: rgba(232,76,136,0.45);
+  color: var(--st-input);
+}
+
 /* Legacy Tac (SVG fallback) */
 .pet-body .tac { width: 84px; height: 84px; animation: bob 2.2s ease-in-out infinite; }
 .pet-body .tac svg { width: 100%; height: 100%; }

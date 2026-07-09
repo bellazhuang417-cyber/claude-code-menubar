@@ -545,6 +545,13 @@ document.addEventListener("click", function (e) {
     e.stopPropagation();
     return;
   }
+  // Panel close button in the header
+  if (e.target.closest(".panel-close")) {
+    callLua("toggle-expand", {});
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
   // Skin picker tabs
   const sbtn = e.target.closest("[data-skin]");
   if (sbtn) {
@@ -600,6 +607,15 @@ document.addEventListener("click", function (e) {
     }
     render();
     return;
+  }
+});
+
+// ---------- Keyboard shortcuts ----------
+document.addEventListener("keydown", function (e) {
+  // Esc → collapse the panel back to just-the-pet.
+  if (e.key === "Escape" && document.body.classList.contains("mode-expanded")) {
+    callLua("toggle-expand", {});
+    e.preventDefault();
   }
 });
 

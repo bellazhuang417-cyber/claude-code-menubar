@@ -359,6 +359,12 @@ function M.resetPetPosition()
     local out = io.open(path, "w")
     if out then out:write(hs_json.encode(cfg)); out:close() end
     configCache = nil
+    -- Also drop the runtime position on the live companion and re-show at
+    -- the default corner so Bella doesn't have to reload Hammerspoon.
+    if state.companion then
+        state.companion.position = nil
+        pet.show(state.companion, nil)
+    end
     mlog("pet position reset to default")
     return "pet position reset"
 end
@@ -1144,6 +1150,12 @@ function M.listPetWindowMethods(pattern)
 end
 
 -- Debug helper: inspect the pet object from `hs -c`.
+function M.petFrame()
+    if not state.companion or not state.companion.view then return nil end
+    local f = state.companion.view:frame()
+    return string.format("%d %d %d %d", f.x, f.y, f.w, f.h)
+end
+
 function M.petDebug()
     if not state.petObj then return "petObj=NIL" end
     local v = state.petObj.view
