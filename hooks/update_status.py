@@ -212,13 +212,23 @@ def _extract_permission_payload(payload: dict) -> dict:
     return out
 
 
-def _hammerspoon_running() -> bool:
+def _companion_running() -> bool:
+    """True if any UI capable of writing remote decisions is alive —
+    either the legacy Hammerspoon plugin or the Tauri Claude Companion."""
     try:
-        return subprocess.run(
+        if subprocess.run(
             ["pgrep", "-x", "Hammerspoon"], capture_output=True, timeout=5
+        ).returncode == 0:
+            return True
+        return subprocess.run(
+            ["pgrep", "-f", "claude-companion"], capture_output=True, timeout=5
         ).returncode == 0
     except Exception:
         return False
+
+
+# Backwards-compat alias (older call sites)
+_hammerspoon_running = _companion_running
 
 
 def _read_session_entry(session_id: str) -> dict:
